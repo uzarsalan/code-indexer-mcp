@@ -6,7 +6,7 @@
 import { EventEmitter } from 'events';
 import { Readable, Transform, Writable, pipeline } from 'stream';
 import { promisify } from 'util';
-import { promises as fs } from 'fs';
+import { promises as fs, createReadStream } from 'fs';
 import { CodeChunk } from '../types.js';
 import { StructuredError, ErrorCode } from './error-handling.js';
 
@@ -291,12 +291,28 @@ export class StreamingFileProcessor extends EventEmitter {
     let buffer = '';
     let lineNumber = 1;
     const chunkSize = 1000; // Characters per chunk
+    const maxBufferSize = 50000; // Prevent buffer from growing too large
 
     return new Promise((resolve, reject) => {
-      const readStream = fs.createReadStream(filePath, { encoding: 'utf-8' });
+      const readStream = createReadStream(filePath, { 
+        encoding: 'utf-8',
+        highWaterMark: 16 * 1024 // 16KB chunks to prevent memory spikes
+      });
       
-      readStream.on('data', (data: string) => {
-        buffer += data;
+      readStream.on('data', (data: string | Buffer) => {
+        const stringData = typeof data === 'string' ? data : data.toString();
+        buffer += stringData;
+        
+        // Prevent buffer from growing too large
+        if (buffer.length > maxBufferSize) {
+          // Force chunk creation to free memory
+          if (buffer.trim()) {
+            const endLine = lineNumber + buffer.split('\n').length - 1;
+            chunks.push(this.createChunk(buffer, filePath, lineNumber, endLine));
+            lineNumber = endLine + 1;
+            buffer = '';
+          }
+        }
         
         // Process complete lines
         const lines = buffer.split('\n');
@@ -324,7 +340,11 @@ export class StreamingFileProcessor extends EventEmitter {
         resolve(chunks);
       });
 
-      readStream.on('error', reject);
+      readStream.on('error', (error: Error) => {
+        // Clean up resources on error
+        readStream.destroy();
+        reject(error);
+      });
     });
   }
 
@@ -399,29 +419,44 @@ export class StreamingFileProcessor extends EventEmitter {
 class Semaphore {
   private permits: number;
   private waiting: Array<() => void> = [];
+  private isAcquiring = false;
 
   constructor(permits: number) {
     this.permits = permits;
   }
 
   async acquire(): Promise<void> {
-    if (this.permits > 0) {
-      this.permits--;
-      return Promise.resolve();
-    }
-
     return new Promise<void>((resolve) => {
-      this.waiting.push(resolve);
+      // Use setImmediate to ensure atomic operation
+      setImmediate(() => {
+        if (this.permits > 0 && !this.isAcquiring) {
+          this.permits--;
+          resolve();
+        } else {
+          this.waiting.push(resolve);
+        }
+      });
     });
   }
 
   release(): void {
-    if (this.waiting.length > 0) {
-      const resolve = this.waiting.shift()!;
-      resolve();
-    } else {
-      this.permits++;
-    }
+    // Use setImmediate to ensure atomic operation
+    setImmediate(() => {
+      if (this.waiting.length > 0) {
+        const resolve = this.waiting.shift()!;
+        resolve();
+      } else {
+        this.permits++;
+      }
+    });
+  }
+
+  // Add method to get current state for debugging
+  getState(): { permits: number; waiting: number } {
+    return {
+      permits: this.permits,
+      waiting: this.waiting.length
+    };
   }
 }
 
@@ -503,22 +538,23 @@ export class ChunkProcessingPipeline {
     const readable = Readable.from(chunkSource);
     
     // Chain processors as transforms
-    const transforms = processors.map((processor, index) => 
-      new Transform({
+    const transforms = processors.map((processor, index) => {
+      const memoryMonitor = this.memoryMonitor;
+      return new Transform({
         objectMode: true,
         async transform(chunks: CodeChunk[], encoding, callback) {
           try {
             // Wait for memory before processing
-            await this.memoryMonitor.waitForMemoryAvailable(100);
+            await memoryMonitor.waitForMemoryAvailable(100);
             
             const processed = await processor(chunks);
             callback(null, processed);
           } catch (error) {
-            callback(error);
+            callback(error as Error);
           }
         }
-      })
-    );
+      });
+    });
 
     // Final sink
     const writable = new Writable({
@@ -529,11 +565,28 @@ export class ChunkProcessingPipeline {
       }
     });
 
-    // Build pipeline
-    const pipelineElements = [readable, ...transforms, writable];
-    
     try {
-      await pipelineAsync(...pipelineElements);
+      if (transforms.length === 0) {
+        await pipelineAsync(readable, writable);
+      } else if (transforms.length === 1) {
+        await pipelineAsync(readable, transforms[0], writable);
+      } else if (transforms.length === 2) {
+        await pipelineAsync(readable, transforms[0], transforms[1], writable);
+      } else {
+        // For more than 2 transforms, use a manual approach
+        let currentStream = readable;
+        for (const transform of transforms) {
+          currentStream = currentStream.pipe(transform);
+        }
+        currentStream.pipe(writable);
+        
+        // Wait for completion
+        await new Promise((resolve, reject) => {
+          writable.on('finish', resolve);
+          writable.on('error', reject);
+          currentStream.on('error', reject);
+        });
+      }
       console.log('Chunk processing pipeline completed');
     } catch (error) {
       console.error('Pipeline error:', error);

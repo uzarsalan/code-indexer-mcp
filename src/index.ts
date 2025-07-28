@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+import { config } from 'dotenv';
+config();
+
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -14,6 +17,7 @@ import { EmbeddingService } from './embeddings.js';
 import { VectorStore } from './vector-store.js';
 import { SearchService } from './search-service.js';
 import { defaultIndexingOptions } from './config.js';
+import { GRAPH_MCP_TOOLS, GraphMCPHandler } from './graph/graph-mcp-tools.js';
 
 class CodeIndexerMCPServer {
   private server: Server;
@@ -21,6 +25,7 @@ class CodeIndexerMCPServer {
   private embeddingService: EmbeddingService;
   private vectorStore: VectorStore;
   private searchService: SearchService;
+  private graphHandler: GraphMCPHandler;
 
   constructor() {
     this.server = new Server(
@@ -39,6 +44,7 @@ class CodeIndexerMCPServer {
     this.embeddingService = new EmbeddingService();
     this.vectorStore = new VectorStore();
     this.searchService = new SearchService();
+    this.graphHandler = new GraphMCPHandler();
 
     this.setupHandlers();
   }
@@ -208,6 +214,8 @@ class CodeIndexerMCPServer {
               required: ['projectName'],
             },
           },
+          // Add Graph MCP Tools
+          ...GRAPH_MCP_TOOLS,
         ],
       };
     });
@@ -265,6 +273,19 @@ class CodeIndexerMCPServer {
             return await this.handleDeleteProject(args as {
               projectName: string;
             });
+
+          // Handle Graph MCP Tools
+          case 'build_project_graph':
+          case 'get_graph_stats':
+          case 'search_graph_nodes':
+          case 'get_node_relationships':
+          case 'analyze_impact':
+          case 'find_bottlenecks':
+          case 'find_circular_dependencies':
+          case 'update_graph_incremental':
+          case 'analyze_feature_requirements':
+          case 'hunt_bug':
+            return await this.graphHandler.handleTool(name, args);
 
           default:
             throw new McpError(

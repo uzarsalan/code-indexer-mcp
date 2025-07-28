@@ -3,30 +3,49 @@ import { join, extname, relative } from 'path';
 import walk from 'walk';
 import ignore from 'ignore';
 import { CodeChunk, IndexingOptions } from './types.js';
+import { ASTAnalyzer } from './ast-analyzer.js';
+import { CodePurposeGenerator } from './code-purpose-generator.js';
 
 export class CodeIndexer {
   private options: IndexingOptions;
   private ig: ReturnType<typeof ignore>;
+  private astAnalyzer: ASTAnalyzer;
+  private purposeGenerator: CodePurposeGenerator;
 
   constructor(options: IndexingOptions) {
     this.options = options;
     this.ig = ignore().add(options.excludePatterns);
+    this.astAnalyzer = new ASTAnalyzer();
+    this.purposeGenerator = new CodePurposeGenerator();
   }
 
   async indexDirectory(rootPath: string, projectId: string): Promise<CodeChunk[]> {
     const chunks: CodeChunk[] = [];
     const files = await this.getFilesToIndex(rootPath);
 
+    console.log(`Processing ${files.length} files with AST-based chunking...`);
+
     for (const filePath of files) {
       try {
         const fileChunks = await this.processFile(filePath, rootPath, projectId);
         chunks.push(...fileChunks);
+        console.log(`Processed ${filePath}: ${fileChunks.length} chunks`);
       } catch (error) {
         console.error(`Error processing file ${filePath}:`, error);
       }
     }
 
-    return chunks;
+    console.log(`Extracted ${chunks.length} semantic chunks. Generating purposes...`);
+
+    // Generate purposes for all chunks (if OpenAI is available)
+    try {
+      const enhancedChunks = await this.purposeGenerator.generatePurposeBatch(chunks);
+      console.log(`Enhanced ${enhancedChunks.length} chunks with AI-generated purposes`);
+      return enhancedChunks;
+    } catch (error) {
+      console.warn('Purpose generation failed, using chunks without purposes:', error);
+      return chunks;
+    }
   }
 
   private async getFilesToIndex(rootPath: string): Promise<string[]> {
@@ -61,7 +80,16 @@ export class CodeIndexer {
     const relativePath = relative(rootPath, filePath);
     const language = this.getLanguageFromExtension(extname(filePath));
 
-    return this.chunkContent(content, filePath, relativePath, language, projectId);
+    // Use AST-based chunking for supported languages, fallback to simple chunking
+    if (this.astAnalyzer && this.supportsAST(language)) {
+      return this.astAnalyzer.extractSemanticChunks(content, language, relativePath, projectId);
+    } else {
+      return this.chunkContent(content, filePath, relativePath, language, projectId);
+    }
+  }
+
+  private supportsAST(language: string): boolean {
+    return ['typescript', 'javascript', 'go', 'rust'].includes(language);
   }
 
   private chunkContent(content: string, filePath: string, relativePath: string, language: string, projectId: string): CodeChunk[] {

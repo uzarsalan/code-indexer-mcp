@@ -330,7 +330,7 @@ export class GitMCPToolHandlers {
     }
 
     // Create Git repository record
-    const { data: gitRepo, error } = await this.vectorStore.supabase
+    const { data: gitRepo, error } = await this.vectorStore.getSupabaseClient()
       .from('git_repositories')
       .insert({
         project_id: project.id,
@@ -353,7 +353,7 @@ export class GitMCPToolHandlers {
 
     // Save branch rules to database
     for (const rule of config.rules) {
-      await this.vectorStore.supabase
+      await this.vectorStore.getSupabaseClient()
         .from('git_branches')
         .insert({
           repository_id: gitRepo.id,
@@ -392,7 +392,7 @@ export class GitMCPToolHandlers {
       throw new Error(`Project '${projectName}' not found`);
     }
 
-    const { data: repo } = await this.vectorStore.supabase
+    const { data: repo } = await this.vectorStore.getSupabaseClient()
       .from('git_repositories')
       .select('id')
       .eq('project_id', project.id)
@@ -414,7 +414,7 @@ export class GitMCPToolHandlers {
         strategy: rule.strategy || 'incremental-diff'
       };
 
-      await this.vectorStore.supabase
+      await this.vectorStore.getSupabaseClient()
         .from('git_branches')
         .upsert({
           repository_id: repo.id,
@@ -453,7 +453,7 @@ export class GitMCPToolHandlers {
       throw new Error(`Project '${projectName}' not found`);
     }
 
-    const { data: repo } = await this.vectorStore.supabase
+    const { data: repo } = await this.vectorStore.getSupabaseClient()
       .from('git_repositories')
       .select('*')
       .eq('project_id', project.id)
@@ -495,7 +495,7 @@ export class GitMCPToolHandlers {
       }
 
       // Update branch indexing status
-      await this.vectorStore.supabase
+      await this.vectorStore.getSupabaseClient()
         .from('git_branches')
         .upsert({
           repository_id: repo.id,
@@ -554,7 +554,7 @@ export class GitMCPToolHandlers {
     // Perform temporal search
     const queryEmbedding = await this.vectorStore.generateEmbedding(query);
     
-    const { data, error } = await this.vectorStore.supabase.rpc('search_code_chunks_temporal', {
+    const { data, error } = await this.vectorStore.getSupabaseClient().rpc('search_code_chunks_temporal', {
       query_embedding: queryEmbedding,
       match_threshold: threshold,
       match_count: limit,
@@ -620,7 +620,7 @@ ${result.content}
       throw new Error(`Project '${projectName}' not found`);
     }
 
-    const { data: repo } = await this.vectorStore.supabase
+    const { data: repo } = await this.vectorStore.getSupabaseClient()
       .from('git_repositories')
       .select('id')
       .eq('project_id', project.id)
@@ -631,7 +631,7 @@ ${result.content}
     }
 
     // Get file evolution from database
-    const { data, error } = await this.vectorStore.supabase.rpc('get_file_evolution', {
+    const { data, error } = await this.vectorStore.getSupabaseClient().rpc('get_file_evolution', {
       repo_id: repo.id,
       file_path_param: filePath,
       branch_name_param: branchName || null,
@@ -688,7 +688,7 @@ ${entry.chunk_content ? `\`\`\`\n${entry.chunk_content.substring(0, 500)}${entry
       throw new Error(`Project '${projectName}' not found`);
     }
 
-    const { data: repo } = await this.vectorStore.supabase
+    const { data: repo } = await this.vectorStore.getSupabaseClient()
       .from('git_repositories')
       .select('id')
       .eq('project_id', project.id)
@@ -699,7 +699,7 @@ ${entry.chunk_content ? `\`\`\`\n${entry.chunk_content.substring(0, 500)}${entry
     }
 
     // Compare branches using database function
-    const { data, error } = await this.vectorStore.supabase.rpc('compare_branches', {
+    const { data, error } = await this.vectorStore.getSupabaseClient().rpc('compare_branches', {
       repo_id: repo.id,
       source_branch: sourceBranch,
       target_branch: targetBranch
