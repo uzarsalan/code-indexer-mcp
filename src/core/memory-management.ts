@@ -6,9 +6,9 @@
 import { EventEmitter } from 'events';
 import { Readable, Transform, Writable, pipeline } from 'stream';
 import { promisify } from 'util';
-import { promises as fs } from 'fs';
-import { CodeChunk } from '../types';
-import { StructuredError, ErrorCode } from './error-handling';
+import { promises as fs, createReadStream } from 'fs';
+import { CodeChunk } from '../types.js';
+import { StructuredError, ErrorCode } from './error-handling.js';
 
 const pipelineAsync = promisify(pipeline);
 
@@ -294,13 +294,14 @@ export class StreamingFileProcessor extends EventEmitter {
     const maxBufferSize = 50000; // Prevent buffer from growing too large
 
     return new Promise((resolve, reject) => {
-      const readStream = fs.createReadStream(filePath, { 
+      const readStream = createReadStream(filePath, { 
         encoding: 'utf-8',
         highWaterMark: 16 * 1024 // 16KB chunks to prevent memory spikes
       });
       
-      readStream.on('data', (data: string) => {
-        buffer += data;
+      readStream.on('data', (data: string | Buffer) => {
+        const stringData = typeof data === 'string' ? data : data.toString();
+        buffer += stringData;
         
         // Prevent buffer from growing too large
         if (buffer.length > maxBufferSize) {
@@ -339,7 +340,7 @@ export class StreamingFileProcessor extends EventEmitter {
         resolve(chunks);
       });
 
-      readStream.on('error', (error) => {
+      readStream.on('error', (error: Error) => {
         // Clean up resources on error
         readStream.destroy();
         reject(error);
@@ -537,22 +538,23 @@ export class ChunkProcessingPipeline {
     const readable = Readable.from(chunkSource);
     
     // Chain processors as transforms
-    const transforms = processors.map((processor, index) => 
-      new Transform({
+    const transforms = processors.map((processor, index) => {
+      const memoryMonitor = this.memoryMonitor;
+      return new Transform({
         objectMode: true,
         async transform(chunks: CodeChunk[], encoding, callback) {
           try {
             // Wait for memory before processing
-            await this.memoryMonitor.waitForMemoryAvailable(100);
+            await memoryMonitor.waitForMemoryAvailable(100);
             
             const processed = await processor(chunks);
             callback(null, processed);
           } catch (error) {
-            callback(error);
+            callback(error as Error);
           }
         }
-      })
-    );
+      });
+    });
 
     // Final sink
     const writable = new Writable({
@@ -563,11 +565,28 @@ export class ChunkProcessingPipeline {
       }
     });
 
-    // Build pipeline
-    const pipelineElements = [readable, ...transforms, writable];
-    
     try {
-      await pipelineAsync(...pipelineElements);
+      if (transforms.length === 0) {
+        await pipelineAsync(readable, writable);
+      } else if (transforms.length === 1) {
+        await pipelineAsync(readable, transforms[0], writable);
+      } else if (transforms.length === 2) {
+        await pipelineAsync(readable, transforms[0], transforms[1], writable);
+      } else {
+        // For more than 2 transforms, use a manual approach
+        let currentStream = readable;
+        for (const transform of transforms) {
+          currentStream = currentStream.pipe(transform);
+        }
+        currentStream.pipe(writable);
+        
+        // Wait for completion
+        await new Promise((resolve, reject) => {
+          writable.on('finish', resolve);
+          writable.on('error', reject);
+          currentStream.on('error', reject);
+        });
+      }
       console.log('Chunk processing pipeline completed');
     } catch (error) {
       console.error('Pipeline error:', error);

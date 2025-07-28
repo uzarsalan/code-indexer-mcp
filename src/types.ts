@@ -19,6 +19,16 @@ export interface CodeChunk {
   endLine: number;
   language: string;
   embedding?: number[];
+  // Semantic enhancements
+  nodeType?: 'function' | 'class' | 'method' | 'variable' | 'interface' | 'type' | 'module' | 'block';
+  functionName?: string;
+  className?: string;
+  purpose?: string;        // AI-generated description of what this code does
+  dependencies?: string[]; // imports, used functions/classes
+  complexity?: number;     // cyclomatic complexity score
+  parameters?: string[];   // function parameters
+  returnType?: string;     // return type for functions
+  docstring?: string;      // extracted documentation/comments
 }
 
 export interface SearchResult {

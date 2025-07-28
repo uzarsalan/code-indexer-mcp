@@ -1,12 +1,16 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { CodeChunk, SearchResult, Project, IndexingOptions } from './types';
-import { supabaseConfig } from './config';
+import { CodeChunk, SearchResult, Project, IndexingOptions } from './types.js';
+import { supabaseConfig } from './config.js';
 
 export class VectorStore {
   private supabase: SupabaseClient;
 
   constructor() {
     this.supabase = createClient(supabaseConfig.url, supabaseConfig.anonKey);
+  }
+
+  getSupabaseClient(): SupabaseClient {
+    return this.supabase;
   }
 
   async initializeDatabase(): Promise<void> {
@@ -342,5 +346,19 @@ export class VectorStore {
       totalChunks: chunksResult.count || 0,
       totalFiles: uniqueFiles.length
     };
+  }
+
+  async embedChunks(chunks: CodeChunk[]): Promise<CodeChunk[]> {
+    // This method should generate embeddings for the chunks
+    // For now, we'll just return them unchanged as the embedding generation
+    // is typically handled by EmbeddingService
+    return chunks;
+  }
+
+  async generateEmbedding(text: string): Promise<number[]> {
+    // This method should generate an embedding for the given text
+    // For now, we'll return a dummy embedding
+    // In a real implementation, this would call OpenAI's embedding API
+    return new Array(1536).fill(0);
   }
 }

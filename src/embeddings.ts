@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
-import { CodeChunk } from './types';
-import { openaiConfig } from './config';
+import { CodeChunk } from './types.js';
+import { openaiConfig } from './config.js';
 
 export class EmbeddingService {
   private openai: OpenAI;
@@ -68,11 +68,51 @@ export class EmbeddingService {
   }
 
   private prepareTextForEmbedding(chunk: CodeChunk): string {
-    return `File: ${chunk.filePath}
+    // Enhanced semantic context for embeddings
+    let contextText = `File: ${chunk.filePath}
 Language: ${chunk.language}
-Lines: ${chunk.startLine}-${chunk.endLine}
+Lines: ${chunk.startLine}-${chunk.endLine}`;
 
-${chunk.content}`;
+    // Add semantic information if available
+    if (chunk.nodeType) {
+      contextText += `\nType: ${chunk.nodeType}`;
+    }
+
+    if (chunk.functionName) {
+      contextText += `\nFunction: ${chunk.functionName}`;
+    }
+
+    if (chunk.className) {
+      contextText += `\nClass: ${chunk.className}`;
+    }
+
+    if (chunk.purpose) {
+      contextText += `\nPurpose: ${chunk.purpose}`;
+    }
+
+    if (chunk.parameters && chunk.parameters.length > 0) {
+      contextText += `\nParameters: ${chunk.parameters.join(', ')}`;
+    }
+
+    if (chunk.returnType) {
+      contextText += `\nReturns: ${chunk.returnType}`;
+    }
+
+    if (chunk.dependencies && chunk.dependencies.length > 0) {
+      contextText += `\nDependencies: ${chunk.dependencies.join(', ')}`;
+    }
+
+    if (chunk.docstring) {
+      contextText += `\nDocumentation: ${chunk.docstring}`;
+    }
+
+    if (chunk.complexity && chunk.complexity > 1) {
+      contextText += `\nComplexity: ${chunk.complexity}`;
+    }
+
+    contextText += `\n\n${chunk.content}`;
+    
+    return contextText;
   }
 
   calculateSimilarity(embedding1: number[], embedding2: number[]): number {

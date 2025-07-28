@@ -5,9 +5,9 @@
 
 import Redis from 'ioredis';
 import { EventEmitter } from 'events';
-import { StructuredLogger, logger } from './observability';
-import { StructuredError, ErrorCode, wrapAsyncOperation } from './error-handling';
-import { CodeChunk, SearchResult } from '../types';
+import { StructuredLogger, logger } from './observability.js';
+import { StructuredError, ErrorCode, wrapAsyncOperation } from './error-handling.js';
+import { CodeChunk, SearchResult } from '../types.js';
 
 // =============================================================================
 // CACHE CONFIGURATION
@@ -103,13 +103,13 @@ export class CacheManager extends EventEmitter {
   private logger: StructuredLogger;
   private stats: CacheStats;
   private compressionEnabled: boolean;
-  private pipeline?: Redis.Pipeline;
+  private pipeline?: any;
   private pipelineTimer?: NodeJS.Timeout;
 
   constructor(config: Partial<CacheConfig> = {}) {
     super();
     this.config = this.mergeConfig(config);
-    this.logger = logger.child({ component: 'CacheManager' });
+    this.logger = logger.child({ operation: 'cache', metadata: { component: 'CacheManager' } });
     this.compressionEnabled = this.config.compression.enabled;
     this.stats = this.initializeStats();
     
@@ -122,7 +122,7 @@ export class CacheManager extends EventEmitter {
       retryDelayOnFailover: this.config.redis.retryDelayOnFailover,
       maxRetriesPerRequest: this.config.redis.maxRetriesPerRequest,
       lazyConnect: this.config.redis.lazyConnect
-    });
+    } as any);
 
     this.setupEventHandlers();
   }
@@ -155,15 +155,18 @@ export class CacheManager extends EventEmitter {
   private setupEventHandlers(): void {
     this.redis.on('connect', () => {
       this.logger.info('Redis connected', {
-        host: this.config.redis.host,
-        port: this.config.redis.port,
-        db: this.config.redis.db
+        operation: 'redis_connect',
+        metadata: {
+          host: this.config.redis.host,
+          port: this.config.redis.port,
+          db: this.config.redis.db
+        }
       });
       this.emit('connected');
     });
 
     this.redis.on('error', (error) => {
-      this.logger.error('Redis error', { error: error.message }, error);
+      this.logger.error('Redis error', { operation: 'redis_error', metadata: { error: error.message } }, error);
       this.emit('error', error);
     });
 
@@ -226,7 +229,7 @@ export class CacheManager extends EventEmitter {
     );
 
     if (result.isFailure) {
-      this.logger.warn('Cache get failed', { key, error: result.error.message });
+      this.logger.warn('Cache get failed', { operation: 'cache_get', metadata: { key, error: result.error.message } });
       return null; // Graceful degradation
     }
 
@@ -257,14 +260,14 @@ export class CacheManager extends EventEmitter {
           args.push('XX');
         }
 
-        const response = await this.redis.set(...args);
+        const response = await this.redis.set(...(args as [string, any, ...any[]]));
         return response === 'OK';
       },
       { operation: 'cache_set', resource: key }
     );
 
     if (result.isFailure) {
-      this.logger.warn('Cache set failed', { key, error: result.error.message });
+      this.logger.warn('Cache set failed', { operation: 'cache_set', metadata: { key, error: result.error.message } });
       return false;
     }
 
@@ -282,7 +285,7 @@ export class CacheManager extends EventEmitter {
     );
 
     if (result.isFailure) {
-      this.logger.warn('Cache delete failed', { key, error: result.error.message });
+      this.logger.warn('Cache delete failed', { operation: 'cache_del', metadata: { key, error: result.error.message } });
       return false;
     }
 
@@ -406,13 +409,16 @@ export class CacheManager extends EventEmitter {
         }
         return results;
       },
-      { operation: 'cache_mget', metadata: { keyCount: keys.length } }
+      { operation: 'cache_mget', resource: `keys:${keys.length}` }
     );
 
     if (result.isFailure) {
       this.logger.warn('Cache mget failed', { 
-        keyCount: keys.length, 
-        error: result.error.message 
+        operation: 'cache_mget',
+        metadata: {
+          keyCount: keys.length, 
+          error: result.error.message
+        }
       });
       return keys.map(() => null);
     }
@@ -434,13 +440,16 @@ export class CacheManager extends EventEmitter {
           return this.msetSequential(pairs, ttlSeconds);
         }
       },
-      { operation: 'cache_mset', metadata: { pairCount: pairs.length } }
+      { operation: 'cache_mset', resource: `pairs:${pairs.length}` }
     );
 
     if (result.isFailure) {
       this.logger.warn('Cache mset failed', { 
-        pairCount: pairs.length, 
-        error: result.error.message 
+        operation: 'cache_mset',
+        metadata: {
+          pairCount: pairs.length, 
+          error: result.error.message
+        } 
       });
       return false;
     }
@@ -488,7 +497,7 @@ export class CacheManager extends EventEmitter {
     );
 
     if (result.isFailure) {
-      this.logger.warn('Pattern deletion failed', { pattern, error: result.error.message });
+      this.logger.warn('Pattern deletion failed', { operation: 'cache_delete_pattern', metadata: { pattern, error: result.error.message } });
       return 0;
     }
 
@@ -521,7 +530,7 @@ export class CacheManager extends EventEmitter {
     );
 
     if (result.isFailure) {
-      this.logger.warn('Pattern scan failed', { pattern, error: result.error.message });
+      this.logger.warn('Pattern scan failed', { operation: 'cache_scan_pattern', metadata: { pattern, error: result.error.message } });
       return [];
     }
 
@@ -613,7 +622,7 @@ export class CacheManager extends EventEmitter {
         this.stats.connectedClients = parseInt(clientsMatch[1]);
       }
     } catch (error) {
-      this.logger.warn('Failed to get Redis stats', { error });
+      this.logger.warn('Failed to get Redis stats', { operation: 'get_stats', metadata: { error } });
     }
 
     return { ...this.stats };
@@ -650,7 +659,7 @@ export class CacheManager extends EventEmitter {
       await this.redis.flushdb();
     }
     
-    this.logger.info('Cache flushed', { pattern: pattern || 'all' });
+    this.logger.info('Cache flushed', { operation: 'flush', metadata: { pattern: pattern || 'all' } });
   }
 
   async disconnect(): Promise<void> {
@@ -720,7 +729,7 @@ export const cacheManager = new CacheManager();
 // Auto-connect in production
 if (process.env.NODE_ENV === 'production' && process.env.REDIS_HOST) {
   cacheManager.connect().catch(error => {
-    logger.error('Failed to connect to Redis', { error });
+    logger.error('Failed to connect to Redis', { operation: 'redis_connect', metadata: { error } });
   });
 }
 

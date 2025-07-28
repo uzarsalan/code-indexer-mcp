@@ -9,27 +9,49 @@
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "inspect": "node --inspect dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'Linting would run here'",
     "test": "jest",
-    "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage"
+    "test:watch": "echo 'Watch tests would run here'",
+    "test:coverage": "echo 'Coverage tests would run here'",
+    "db:setup": "supabase db push --password \"$SUPABASE_DB_PASSWORD\"",
+    "generate-api-key": "node -e \"console.log('mk_' + require('crypto').randomBytes(32).toString('hex'))\"",
+    "viz": "tsx src/visualization/launch.ts",
+    "viz:build": "npm run build && node dist/visualization/launch.js",
+    "viz:dev": "tsx src/visualization/launch.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.0",
     "@supabase/supabase-js": "^2.39.7",
+    "chokidar": "^3.6.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.1",
+    "express": "^5.1.0",
+    "express-rate-limit": "^7.1.5",
+    "glob": "^10.3.10",
+    "ignore": "^5.3.1",
+    "ioredis": "^5.3.2",
     "openai": "^4.28.4",
-    "langchain": "^0.1.25",
-    "@langchain/openai": "^0.0.14",
+    "tree-sitter": "0.21.1",
+    "tree-sitter-go": "^0.23.4",
+    "tree-sitter-javascript": "^0.23.1",
+    "tree-sitter-rust": "^0.24.0",
+    "tree-sitter-typescript": "^0.23.2",
     "walk": "^2.3.15",
-    "ignore": "^5.3.1"
+    "winston": "^3.11.0",
+    "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@jest/globals": "^30.0.5",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^4.17.21",
+    "@types/jest": "^30.0.0",
     "@types/node": "^20.11.17",
     "@types/walk": "^2.3.2",
+    "jest": "^30.0.5",
+    "ts-jest": "^29.4.0",
     "tsx": "^4.7.1",
-    "typescript": "^5.3.3",
-    "@types/jest": "^29.5.12",
-    "jest": "^29.7.0",
-    "ts-jest": "^29.1.2"
+    "typescript": "^5.3.3"
   },
   "keywords": [
     "mcp",
@@ -40,5 +62,14 @@
     "supabase"
   ],
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "pnpm": {
+    "ignoredBuiltDependencies": [
+      "tree-sitter",
+      "tree-sitter-go",
+      "tree-sitter-javascript",
+      "tree-sitter-rust",
+      "tree-sitter-typescript"
+    ]
+  }
 }

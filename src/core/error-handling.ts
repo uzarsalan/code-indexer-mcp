@@ -140,7 +140,7 @@ export class Result<T, E = StructuredError> {
   }
 
   static failure<E = StructuredError>(error: E): Result<never, E> {
-    return new Result(undefined, error);
+    return new Result(undefined as never, error);
   }
 
   get isSuccess(): boolean {
@@ -167,27 +167,27 @@ export class Result<T, E = StructuredError> {
 
   map<U>(fn: (value: T) => U): Result<U, E> {
     if (this._error) {
-      return Result.failure(this._error);
+      return new Result(undefined as never, this._error);
     }
     try {
-      return Result.success(fn(this._value!));
+      return Result.success(fn(this._value!)) as Result<U, E>;
     } catch (error) {
-      return Result.failure(error as E);
+      return new Result(undefined as never, error as E);
     }
   }
 
   flatMap<U>(fn: (value: T) => Result<U, E>): Result<U, E> {
     if (this._error) {
-      return Result.failure(this._error);
+      return new Result(undefined as never, this._error);
     }
     return fn(this._value!);
   }
 
   mapError<F>(fn: (error: E) => F): Result<T, F> {
     if (this._error) {
-      return Result.failure(fn(this._error));
+      return new Result(undefined as never, fn(this._error));
     }
-    return Result.success(this._value!);
+    return new Result(this._value!, undefined) as Result<T, F>;
   }
 
   getOrElse(defaultValue: T): T {
@@ -233,17 +233,17 @@ export class RetryExecutor {
     operation: () => Promise<T>,
     context: { operation: string; resource?: string }
   ): Promise<Result<T, StructuredError>> {
-    let lastError: Error;
+    let lastError: Error | undefined;
     
     for (let attempt = 1; attempt <= this.config.maxAttempts; attempt++) {
       try {
         const result = await operation();
         return Result.success(result);
       } catch (error) {
-        lastError = error;
+        lastError = error instanceof Error ? error : new Error(String(error));
         
         // Check if we should retry
-        const shouldRetry = this.shouldRetry(error, attempt);
+        const shouldRetry = this.shouldRetry(lastError, attempt);
         if (!shouldRetry) {
           break;
         }
@@ -253,7 +253,7 @@ export class RetryExecutor {
         
         // Log retry attempt
         console.warn(`Retry attempt ${attempt}/${this.config.maxAttempts} for ${context.operation} after ${delay}ms`, {
-          error: error.message,
+          error: lastError.message,
           attempt,
           delay
         });
@@ -263,6 +263,10 @@ export class RetryExecutor {
     }
 
     // All retries failed, wrap in StructuredError if needed
+    if (!lastError) {
+      lastError = new Error('Operation failed without error');
+    }
+    
     const structuredError = lastError instanceof StructuredError 
       ? lastError 
       : new StructuredError(

@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code Property Graph Visualization</title>
+    <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+    <script src="https://unpkg.com/cytoscape-cose-bilkent@4.1.0/cytoscape-cose-bilkent.js"></script>
+    <script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+    <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .header {
+            background: #2c3e50;
+            color: white;
+            padding: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            z-index: 1000;
+            position: relative;
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .controls {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .control-group label {
+            font-size: 0.75rem;
+            opacity: 0.8;
+        }
+
+        select, input, button {
+            padding: 0.5rem;
+            border: none;
+            border-radius: 4px;
+            font-size: 0.875rem;
+        }
+
+        select, input {
+            background: white;
+            border: 1px solid #ddd;
+        }
+
+        button {
+            background: #3498db;
+            color: white;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #2980b9;
+        }
+
+        button:disabled {
+            background: #95a5a6;
+            cursor: not-allowed;
+        }
+
+        .main-container {
+            display: flex;
+            height: calc(100vh - 80px);
+        }
+
+        .sidebar {
+            width: 300px;
+            background: white;
+            border-right: 1px solid #ddd;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .sidebar-section {
+            padding: 1rem;
+            border-bottom: 1px solid #eee;
+        }
+
+        .sidebar-section h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: #2c3e50;
+        }
+
+        .project-info {
+            background: #ecf0f1;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .stat-item {
+            background: white;
+            padding: 0.5rem;
+            border-radius: 4px;
+            text-align: center;
+            border: 1px solid #ddd;
+        }
+
+        .stat-value {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: #7f8c8d;
+            margin-top: 0.25rem;
+        }
+
+        .search-box {
+            width: 100%;
+            margin-bottom: 0.5rem;
+        }
+
+        .search-results {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background: white;
+        }
+
+        .search-result {
+            padding: 0.5rem;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .search-result:hover {
+            background: #f8f9fa;
+        }
+
+        .search-result:last-child {
+            border-bottom: none;
+        }
+
+        .node-name {
+            font-weight: 600;
+            color: #2c3e50;
+        }
+
+        .node-type {
+            font-size: 0.75rem;
+            color: #7f8c8d;
+            background: #ecf0f1;
+            padding: 0.125rem 0.25rem;
+            border-radius: 2px;
+            margin-left: 0.5rem;
+        }
+
+        .node-file {
+            font-size: 0.75rem;
+            color: #95a5a6;
+            margin-top: 0.25rem;
+        }
+
+        .graph-container {
+            flex: 1;
+            position: relative;
+            background: white;
+        }
+
+        #graph {
+            width: 100%;
+            height: 100%;
+        }
+
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 255, 255, 0.9);
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            text-align: center;
+            z-index: 1000;
+        }
+
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            pointer-events: none;
+            z-index: 1001;
+            max-width: 200px;
+        }
+
+        .node-details {
+            padding: 1rem;
+            border-top: 2px solid #3498db;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .node-details .detail-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.5rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid #eee;
+        }
+
+        .node-details .detail-row:last-child {
+            border-bottom: none;
+        }
+
+        .detail-label {
+            font-weight: 600;
+            color: #2c3e50;
+        }
+
+        .detail-value {
+            color: #7f8c8d;
+            font-size: 0.875rem;
+            text-align: right;
+        }
+
+        .error {
+            background: #e74c3c;
+            color: white;
+            padding: 1rem;
+            text-align: center;
+        }
+
+        .layout-controls {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: white;
+            padding: 0.5rem;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            gap: 0.5rem;
+            z-index: 999;
+        }
+
+        .layout-btn {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.75rem;
+            border-radius: 2px;
+        }
+
+        .layout-btn.active {
+            background: #2c3e50;
+        }
+
+        @media (max-width: 768px) {
+            .main-container {
+                flex-direction: column;
+            }
+            
+            .sidebar {
+                width: 100%;
+                height: 200px;
+                border-right: none;
+                border-bottom: 1px solid #ddd;
+            }
+            
+            .controls {
+                flex-wrap: wrap;
+                gap: 0.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🎨 Code Property Graph</h1>
+        <div class="controls">
+            <div class="control-group">
+                <label>Project</label>
+                <select id="projectSelect">
+                    <option value="">Loading projects...</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label>Node Type</label>
+                <select id="nodeTypeFilter">
+                    <option value="">All Types</option>
+                    <option value="FUNCTION">Functions</option>
+                    <option value="CLASS">Classes</option>
+                    <option value="VARIABLE">Variables</option>
+                    <option value="MODULE">modules</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label>Limit</label>
+                <input type="number" id="limitInput" value="100" min="10" max="1000" step="10">
+            </div>
+            <button id="refreshBtn">🔄 Refresh</button>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <div class="sidebar">
+            <div class="sidebar-section project-info">
+                <h3>Project Statistics</h3>
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-value" id="totalNodes">-</div>
+                        <div class="stat-label">Nodes</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="totalEdges">-</div>
+                        <div class="stat-label">Edges</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="totalFiles">-</div>
+                        <div class="stat-label">Files</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="healthScore">-</div>
+                        <div class="stat-label">Health</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <h3>Search Nodes</h3>
+                <input type="text" id="searchInput" class="search-box" placeholder="Search by name or purpose...">
+                <div id="searchResults" class="search-results" style="display: none;"></div>
+            </div>
+
+            <div class="sidebar-section node-details" id="nodeDetails" style="display: none;">
+                <h3>Node Details</h3>
+                <div id="nodeDetailsContent"></div>
+            </div>
+        </div>
+
+        <div class="graph-container">
+            <div id="graph"></div>
+            <div class="loading" id="loading">
+                <div class="loading-spinner"></div>
+                <div>Loading graph data...</div>
+            </div>
+            <div class="layout-controls">
+                <button class="layout-btn active" data-layout="cose-bilkent">Force</button>
+                <button class="layout-btn" data-layout="dagre">Hierarchical</button>
+                <button class="layout-btn" data-layout="circle">Circle</button>
+                <button class="layout-btn" data-layout="grid">Grid</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="tooltip" id="tooltip" style="display: none;"></div>
+
+    <script>
+        class GraphVisualization {
+            constructor() {
+                this.cy = null;
+                this.currentProject = null;
+                this.currentLayout = 'cose-bilkent';
+                this.searchTimeout = null;
+                
+                this.init();
+            }
+
+            async init() {
+                await this.loadProjects();
+                this.setupEventListeners();
+                this.initializeCytoscape();
+            }
+
+            async loadProjects() {
+                try {
+                    const response = await fetch('/api/projects');
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        this.populateProjectSelect(result.data);
+                    } else {
+                        this.showError('Failed to load projects');
+                    }
+                } catch (error) {
+                    this.showError('Error loading projects: ' + error.message);
+                }
+            }
+
+            populateProjectSelect(projects) {
+                const select = document.getElementById('projectSelect');
+                select.innerHTML = '<option value="">Select a project...</option>';
+                
+                projects.forEach(project => {
+                    const option = document.createElement('option');
+                    option.value = project.id;
+                    option.textContent = `${project.name} (${project.stats.totalNodes || 0} nodes)`;
+                    select.appendChild(option);
+                });
+
+                if (projects.length > 0) {
+                    select.value = projects[0].id;
+                    this.selectProject(projects[0].id);
+                }
+            }
+
+            async selectProject(projectId) {
+                if (!projectId) return;
+                
+                this.currentProject = projectId;
+                this.showLoading(true);
+                
+                try {
+                    await Promise.all([
+                        this.loadGraphData(),
+                        this.loadProjectStats()
+                    ]);
+                } catch (error) {
+                    this.showError('Error loading project: ' + error.message);
+                } finally {
+                    this.showLoading(false);
+                }
+            }
+
+            async loadGraphData() {
+                const nodeType = document.getElementById('nodeTypeFilter').value;
+                const limit = document.getElementById('limitInput').value;
+                
+                const params = new URLSearchParams({
+                    limit: limit || '100'
+                });
+                
+                if (nodeType) params.append('nodeType', nodeType);
+
+                const response = await fetch(`/api/projects/${this.currentProject}/graph?${params}`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    this.renderGraph(result.data);
+                    this.updateGraphMeta(result.meta);
+                } else {
+                    throw new Error(result.error);
+                }
+            }
+
+            async loadProjectStats() {
+                const response = await fetch(`/api/projects/${this.currentProject}/stats`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    this.updateStats(result.data);
+                } else {
+                    console.warn('Could not load project stats');
+                }
+            }
+
+            updateStats(stats) {
+                document.getElementById('totalNodes').textContent = stats.totalNodes || 0;
+                document.getElementById('totalEdges').textContent = stats.totalEdges || 0;
+                document.getElementById('totalFiles').textContent = stats.totalFiles || 0;
+                document.getElementById('healthScore').textContent = Math.round(stats.healthScore || 0) + '%';
+            }
+
+            updateGraphMeta(meta) {
+                // Update visible counts in sidebar
+                const visibleInfo = `Showing ${meta.visibleNodes}/${meta.totalNodes} nodes`;
+                // Could add this to the UI if needed
+            }
+
+            initializeCytoscape() {
+                this.cy = cytoscape({
+                    container: document.getElementById('graph'),
+                    style: [
+                        {
+                            selector: 'node',
+                            style: {
+                                'background-color': 'data(color)',
+                                'label': 'data(label)',
+                                'width': 'data(size)',
+                                'height': 'data(size)',
+                                'font-size': '12px',
+                                'text-valign': 'center',
+                                'text-halign': 'center',
+                                'overlay-opacity': 0,
+                                'border-width': 2,
+                                'border-color': '#333'
+                            }
+                        },
+                        {
+                            selector: 'node:selected',
+                            style: {
+                                'border-width': 4,
+                                'border-color': '#3498db',
+                                'overlay-opacity': 0.2,
+                                'overlay-color': '#3498db'
+                            }
+                        },
+                        {
+                            selector: 'edge',
+                            style: {
+                                'width': 2,
+                                'line-color': 'data(color)',
+                                'target-arrow-color': 'data(color)',
+                                'target-arrow-shape': 'triangle',
+                                'curve-style': 'bezier',
+                                'overlay-opacity': 0
+                            }
+                        },
+                        {
+                            selector: 'edge:selected',
+                            style: {
+                                'width': 4,
+                                'overlay-opacity': 0.2,
+                                'overlay-color': '#3498db'
+                            }
+                        }
+                    ],
+                    elements: [],
+                    layout: {
+                        name: 'cose-bilkent',
+                        animate: true,
+                        animationDuration: 1000,
+                        fit: true,
+                        padding: 50
+                    }
+                });
+
+                this.setupCytoscapeEvents();
+            }
+
+            setupCytoscapeEvents() {
+                // Node selection
+                this.cy.on('tap', 'node', (evt) => {
+                    const node = evt.target;
+                    this.showNodeDetails(node);
+                });
+
+                // Background tap to deselect
+                this.cy.on('tap', (evt) => {
+                    if (evt.target === this.cy) {
+                        this.hideNodeDetails();
+                    }
+                });
+
+                // Mouse events for tooltips
+                this.cy.on('mouseover', 'node', (evt) => {
+                    this.showTooltip(evt);
+                });
+
+                this.cy.on('mouseout', 'node', () => {
+                    this.hideTooltip();
+                });
+
+                this.cy.on('mousemove', 'node', (evt) => {
+                    this.updateTooltipPosition(evt);
+                });
+            }
+
+            renderGraph(graphData) {
+                if (!this.cy) return;
+
+                this.cy.elements().remove();
+                this.cy.add(graphData.nodes);
+                this.cy.add(graphData.edges);
+                
+                this.applyLayout();
+            }
+
+            applyLayout(layoutName = this.currentLayout) {
+                if (!this.cy) return;
+                
+                this.currentLayout = layoutName;
+                
+                const layoutOptions = {
+                    'cose-bilkent': {
+                        name: 'cose-bilkent',
+                        animate: true,
+                        animationDuration: 1000,
+                        fit: true,
+                        padding: 50,
+                        randomize: false,
+                        nodeRepulsion: 4500,
+                        idealEdgeLength: 50,
+                        edgeElasticity: 0.45
+                    },
+                    'dagre': {
+                        name: 'dagre',
+                        animate: true,
+                        animationDuration: 1000,
+                        fit: true,
+                        padding: 50,
+                        rankDir: 'TB',
+                        spacingFactor: 1.2
+                    },
+                    'circle': {
+                        name: 'circle',
+                        animate: true,
+                        animationDuration: 1000,
+                        fit: true,
+                        padding: 50
+                    },
+                    'grid': {
+                        name: 'grid',
+                        animate: true,
+                        animationDuration: 1000,
+                        fit: true,
+                        padding: 50,
+                        rows: Math.ceil(Math.sqrt(this.cy.nodes().length))
+                    }
+                };
+
+                const layout = this.cy.layout(layoutOptions[layoutName] || layoutOptions['cose-bilkent']);
+                layout.run();
+            }
+
+            async searchNodes(query) {
+                if (!query.trim() || !this.currentProject) {
+                    this.hideSearchResults();
+                    return;
+                }
+
+                try {
+                    const params = new URLSearchParams({ q: query, limit: '10' });
+                    const response = await fetch(`/api/projects/${this.currentProject}/search?${params}`);
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        this.showSearchResults(result.data);
+                    }
+                } catch (error) {
+                    console.error('Search error:', error);
+                }
+            }
+
+            showSearchResults(results) {
+                const container = document.getElementById('searchResults');
+                container.innerHTML = '';
+                
+                if (results.length === 0) {
+                    container.innerHTML = '<div class="search-result">No results found</div>';
+                } else {
+                    results.forEach(result => {
+                        const div = document.createElement('div');
+                        div.className = 'search-result';
+                        div.innerHTML = `
+                            <div>
+                                <span class="node-name">${result.node.name || result.node.nodeKey}</span>
+                                <span class="node-type">${result.node.nodeType}</span>
+                            </div>
+                            <div class="node-file">${result.node.location.filePath}</div>
+                        `;
+                        div.onclick = () => this.selectNodeById(result.node.id);
+                        container.appendChild(div);
+                    });
+                }
+                
+                container.style.display = 'block';
+            }
+
+            hideSearchResults() {
+                document.getElementById('searchResults').style.display = 'none';
+            }
+
+            selectNodeById(nodeId) {
+                const node = this.cy.getElementById(nodeId);
+                if (node.length > 0) {
+                    this.cy.center(node);
+                    node.select();
+                    this.showNodeDetails(node);
+                }
+                this.hideSearchResults();
+            }
+
+            async showNodeDetails(node) {
+                const nodeData = node.data();
+                const container = document.getElementById('nodeDetails');
+                const content = document.getElementById('nodeDetailsContent');
+                
+                content.innerHTML = `
+                    <div class="detail-row">
+                        <span class="detail-label">Name</span>
+                        <span class="detail-value">${nodeData.label}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Type</span>
+                        <span class="detail-value">${nodeData.type}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">File</span>
+                        <span class="detail-value">${nodeData.file}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Complexity</span>
+                        <span class="detail-value">${nodeData.complexity || 'N/A'}</span>
+                    </div>
+                `;
+
+                if (nodeData.purpose) {
+                    content.innerHTML += `
+                        <div class="detail-row">
+                            <span class="detail-label">Purpose</span>
+                            <span class="detail-value">${nodeData.purpose}</span>
+                        </div>
+                    `;
+                }
+
+                if (nodeData.signature) {
+                    content.innerHTML += `
+                        <div class="detail-row">
+                            <span class="detail-label">Signature</span>
+                            <span class="detail-value">${nodeData.signature}</span>
+                        </div>
+                    `;
+                }
+                
+                container.style.display = 'block';
+
+                // Load additional node details
+                try {
+                    const response = await fetch(`/api/nodes/${nodeData.id}/details`);
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        const impact = result.data.impact;
+                        content.innerHTML += `
+                            <div class="detail-row">
+                                <span class="detail-label">Risk Level</span>
+                                <span class="detail-value">${impact.riskLevel}</span>
+                            </div>
+                            <div class="detail-row">
+                                <span class="detail-label">Direct Impact</span>
+                                <span class="detail-value">${impact.directlyAffected} nodes</span>
+                            </div>
+                            <div class="detail-row">
+                                <span class="detail-label">Indirect Impact</span>
+                                <span class="detail-value">${impact.indirectlyAffected} nodes</span>
+                            </div>
+                        `;
+                    }
+                } catch (error) {
+                    console.warn('Could not load node details:', error);
+                }
+            }
+
+            hideNodeDetails() {
+                document.getElementById('nodeDetails').style.display = 'none';
+                this.cy.elements().unselect();
+            }
+
+            showTooltip(evt) {
+                const node = evt.target;
+                const tooltip = document.getElementById('tooltip');
+                const nodeData = node.data();
+                
+                tooltip.innerHTML = `
+                    <strong>${nodeData.label}</strong><br>
+                    Type: ${nodeData.type}<br>
+                    File: ${nodeData.file}
+                `;
+                
+                tooltip.style.display = 'block';
+                this.updateTooltipPosition(evt);
+            }
+
+            updateTooltipPosition(evt) {
+                const tooltip = document.getElementById('tooltip');
+                const x = evt.originalEvent.clientX;
+                const y = evt.originalEvent.clientY;
+                
+                tooltip.style.left = (x + 10) + 'px';
+                tooltip.style.top = (y - 10) + 'px';
+            }
+
+            hideTooltip() {
+                document.getElementById('tooltip').style.display = 'none';
+            }
+
+            setupEventListeners() {
+                // Project selection
+                document.getElementById('projectSelect').addEventListener('change', (e) => {
+                    this.selectProject(e.target.value);
+                });
+
+                // Filters
+                document.getElementById('nodeTypeFilter').addEventListener('change', () => {
+                    if (this.currentProject) this.loadGraphData();
+                });
+
+                document.getElementById('limitInput').addEventListener('change', () => {
+                    if (this.currentProject) this.loadGraphData();
+                });
+
+                // Refresh button
+                document.getElementById('refreshBtn').addEventListener('click', () => {
+                    if (this.currentProject) this.selectProject(this.currentProject);
+                });
+
+                // Search
+                document.getElementById('searchInput').addEventListener('input', (e) => {
+                    clearTimeout(this.searchTimeout);
+                    this.searchTimeout = setTimeout(() => {
+                        this.searchNodes(e.target.value);
+                    }, 300);
+                });
+
+                // Layout controls
+                document.querySelectorAll('.layout-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        document.querySelectorAll('.layout-btn').forEach(b => b.classList.remove('active'));
+                        btn.classList.add('active');
+                        this.applyLayout(btn.dataset.layout);
+                    });
+                });
+
+                // Hide search results when clicking outside
+                document.addEventListener('click', (e) => {
+                    if (!e.target.closest('#searchInput') && !e.target.closest('#searchResults')) {
+                        this.hideSearchResults();
+                    }
+                });
+            }
+
+            showLoading(show) {
+                document.getElementById('loading').style.display = show ? 'block' : 'none';
+            }
+
+            showError(message) {
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'error';
+                errorDiv.textContent = message;
+                
+                document.body.insertBefore(errorDiv, document.body.firstChild);
+                
+                setTimeout(() => {
+                    if (errorDiv.parentNode) {
+                        errorDiv.parentNode.removeChild(errorDiv);
+                    }
+                }, 5000);
+            }
+        }
+
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', () => {
+            new GraphVisualization();
+        });
+    </script>
+</body>
+</html>

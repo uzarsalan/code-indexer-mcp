@@ -7,7 +7,7 @@ import { z } from 'zod';
 import crypto from 'crypto';
 import { rateLimit } from 'express-rate-limit';
 import { Request, Response, NextFunction } from 'express';
-import { StructuredError, ErrorCode, createValidationError } from './error-handling';
+import { StructuredError, ErrorCode, createValidationError } from './error-handling.js';
 
 // =============================================================================
 // INPUT VALIDATION SCHEMAS
@@ -131,7 +131,7 @@ export class InputValidator {
         throw createValidationError(
           `Validation failed: ${errorMessage}`,
           error.errors[0]?.path.join('.'),
-          error.errors[0]?.received
+          'input' in error.errors[0] ? (error.errors[0] as any).input : undefined
         );
       }
       throw error;
@@ -245,7 +245,7 @@ export class SecurityManager {
         legacyHeaders: false,
         store: {
           // Custom store implementation with memory management
-          incr: (key: string, cb: (err?: Error, total?: number) => void) => {
+          incr: (key: string, cb: (err: Error | undefined, total: number, resetTime?: Date) => void) => {
             const now = Date.now();
             const entry = this.rateLimiterStore!.get(key) || { count: 0, resetTime: now + this.config.rateLimitWindowMs };
             
@@ -258,7 +258,7 @@ export class SecurityManager {
             entry.count++;
             this.rateLimiterStore!.set(key, entry);
             
-            cb(undefined, entry.count);
+            cb(undefined, entry.count, new Date(entry.resetTime));
           },
           decrement: (key: string) => {
             const entry = this.rateLimiterStore!.get(key);

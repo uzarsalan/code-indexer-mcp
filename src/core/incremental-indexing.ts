@@ -8,10 +8,10 @@ import { join, relative } from 'path';
 import crypto from 'crypto';
 import { watch, FSWatcher } from 'chokidar';
 import { EventEmitter } from 'events';
-import { CodeChunk, Project } from '../types';
-import { StructuredLogger, logger } from './observability';
-import { StructuredError, ErrorCode, wrapAsyncOperation } from './error-handling';
-import { memoryMonitor, StreamingFileProcessor } from './memory-management';
+import { CodeChunk, Project } from '../types.js';
+import { StructuredLogger, logger } from './observability.js';
+import { StructuredError, ErrorCode, wrapAsyncOperation } from './error-handling.js';
+import { memoryMonitor, StreamingFileProcessor } from './memory-management.js';
 
 // =============================================================================
 // FILE CHANGE TRACKING
@@ -58,7 +58,7 @@ export class FileHashTracker {
 
   constructor(projectPath: string, logger: StructuredLogger) {
     this.projectPath = projectPath;
-    this.logger = logger.child({ component: 'FileHashTracker', projectPath });
+    this.logger = logger.child({ metadata: { component: 'FileHashTracker', projectPath } });
   }
 
   async loadExistingHashes(projectId: string): Promise<void> {
@@ -104,7 +104,7 @@ export class FileHashTracker {
               currentHashes.set(relativePath, existingHash.hash);
             }
           } catch (error) {
-            this.logger.warn(`Failed to process file: ${filePath}`, { error });
+            this.logger.warn(`Failed to process file: ${filePath}`, { operation: 'file_processing', metadata: { error } });
           }
         }
 
@@ -140,7 +140,7 @@ export class FileHashTracker {
           chunkCount: 0
         });
       } catch (error) {
-        this.logger.warn(`Failed to hash file: ${filePath}`, { error });
+        this.logger.warn(`Failed to hash file: ${filePath}`, { operation: 'file_hashing', metadata: { error } });
       }
     }
   }
@@ -200,7 +200,7 @@ export class FileHashTracker {
         chunkCount
       });
     } catch (error) {
-      this.logger.warn(`Failed to update hash for ${relativePath}`, { error });
+      this.logger.warn(`Failed to update hash for ${relativePath}`, { operation: 'update_hash', metadata: { error } });
     }
   }
 
@@ -286,9 +286,7 @@ export class IncrementalIndexer extends EventEmitter {
     this.projectPath = projectPath;
     this.options = { ...DEFAULT_INCREMENTAL_OPTIONS, ...options };
     this.logger = logger.child({ 
-      component: 'IncrementalIndexer', 
-      projectId, 
-      projectPath 
+      metadata: { component: 'IncrementalIndexer', projectId, projectPath }
     });
     this.hashTracker = new FileHashTracker(projectPath, this.logger);
   }
@@ -310,7 +308,7 @@ export class IncrementalIndexer extends EventEmitter {
     }
 
     this.logger.info('Incremental indexer initialized', { 
-      realTimeWatch: this.options.enableRealTimeWatch 
+      metadata: { realTimeWatch: this.options.enableRealTimeWatch }
     });
   }
 
@@ -337,11 +335,14 @@ export class IncrementalIndexer extends EventEmitter {
       session.changeDetection = changes;
 
       this.logger.info('Change detection completed', {
-        sessionId: session.id,
-        added: changes.added.length,
-        modified: changes.modified.length,
-        deleted: changes.deleted.length,
-        unchanged: changes.unchanged.length
+        operation: 'change_detection',
+        metadata: {
+          sessionId: session.id,
+          added: changes.added.length,
+          modified: changes.modified.length,
+          deleted: changes.deleted.length,
+          unchanged: changes.unchanged.length
+        }
       });
 
       this.emit('changesDetected', { session, changes });
@@ -354,9 +355,12 @@ export class IncrementalIndexer extends EventEmitter {
       session.endTime = new Date();
 
       this.logger.info('Incremental indexing completed', {
-        sessionId: session.id,
-        duration: session.endTime.getTime() - session.startTime.getTime(),
-        stats: session.stats
+        operation: 'incremental_indexing',
+        metadata: {
+          sessionId: session.id,
+          duration: session.endTime.getTime() - session.startTime.getTime(),
+          stats: session.stats
+        }
       });
 
       this.emit('indexingCompleted', session);
@@ -368,8 +372,8 @@ export class IncrementalIndexer extends EventEmitter {
       session.stats.errors++;
 
       this.logger.error('Incremental indexing failed', {
-        sessionId: session.id,
-        error: error.message
+        operation: 'incremental_indexing',
+        metadata: { sessionId: session.id, error: (error as Error).message }
       }, error as Error);
 
       this.emit('indexingFailed', { session, error });
@@ -405,8 +409,8 @@ export class IncrementalIndexer extends EventEmitter {
       } catch (error) {
         session.stats.errors++;
         this.logger.error(`Failed to process deleted file: ${relativePath}`, {
-          sessionId: session.id,
-          error: error.message
+          operation: 'delete_file',
+          metadata: { sessionId: session.id, error: (error as Error).message }
         }, error as Error);
       }
     }
@@ -433,8 +437,8 @@ export class IncrementalIndexer extends EventEmitter {
     processor.on('fileError', ({ filePath, error }) => {
       session.stats.errors++;
       this.logger.error(`File processing error: ${filePath}`, {
-        sessionId: session.id,
-        error: error.message
+        operation: 'file_processing',
+        metadata: { sessionId: session.id, error: error.message }
       }, error);
     });
 
@@ -511,7 +515,7 @@ export class IncrementalIndexer extends EventEmitter {
                 try {
                   await this.performIncrementalIndex();
                 } catch (error) {
-                  this.logger.error('Auto-indexing failed', { error });
+                  this.logger.error('Auto-indexing failed', { operation: 'auto_indexing', metadata: { error } });
                 }
               }
             }
@@ -519,20 +523,20 @@ export class IncrementalIndexer extends EventEmitter {
             this.changeTimer = undefined;
           }, this.options.watchDebounceMs);
         } catch (error) {
-          this.logger.error('Error handling file change', { path, error });
+          this.logger.error('Error handling file change', { operation: 'file_change', metadata: { path, error } });
         }
       };
 
       const errorHandler = (error: Error) => {
-        this.logger.error('File watcher error', { error: error.message }, error);
+        this.logger.error('File watcher error', { operation: 'file_watcher', metadata: { error: error.message } }, error);
         this.emit('watchError', error);
         
         // Attempt to restart watcher after a delay
         setTimeout(() => {
-          if (!this.watcher || this.watcher.closed) {
+          if (!this.watcher || (this.watcher as any).closed) {
             this.logger.info('Attempting to restart file watcher');
             this.startWatching().catch(restartError => {
-              this.logger.error('Failed to restart file watcher', { error: restartError });
+              this.logger.error('Failed to restart file watcher', { operation: 'file_watcher_restart', metadata: { error: restartError } });
             });
           }
         }, 5000);
@@ -555,11 +559,14 @@ export class IncrementalIndexer extends EventEmitter {
       });
 
       this.logger.info('File watching started', {
-        patterns: this.options.includePatterns,
-        ignored: this.options.excludePatterns
+        operation: 'file_watching',
+        metadata: {
+          patterns: this.options.includePatterns,
+          ignored: this.options.excludePatterns
+        }
       });
     } catch (error) {
-      this.logger.error('Failed to start file watching', { error });
+      this.logger.error('Failed to start file watching', { operation: 'file_watching', metadata: { error } });
       throw error;
     }
   }
@@ -578,7 +585,7 @@ export class IncrementalIndexer extends EventEmitter {
           try {
             cleanup();
           } catch (error) {
-            this.logger.warn('Error during cleanup', { error });
+            this.logger.warn('Error during cleanup', { operation: 'cleanup', metadata: { error } });
           }
         }
         this.cleanupHandlers = [];
@@ -597,7 +604,7 @@ export class IncrementalIndexer extends EventEmitter {
         
         this.logger.info('File watching stopped');
       } catch (error) {
-        this.logger.error('Error stopping file watcher', { error });
+        this.logger.error('Error stopping file watcher', { operation: 'stop_watching', metadata: { error } });
         this.watcher = undefined; // Force cleanup even on error
       }
     }
@@ -619,7 +626,7 @@ export class IncrementalIndexer extends EventEmitter {
         try {
           cleanup();
         } catch (error) {
-          this.logger.warn('Error during shutdown cleanup', { error });
+          this.logger.warn('Error during shutdown cleanup', { operation: 'shutdown', metadata: { error } });
         }
       }
       this.cleanupHandlers = [];
@@ -629,7 +636,7 @@ export class IncrementalIndexer extends EventEmitter {
       
       this.logger.info('Incremental indexer shutdown');
     } catch (error) {
-      this.logger.error('Error during shutdown', { error });
+      this.logger.error('Error during shutdown', { operation: 'shutdown', metadata: { error } });
       throw error;
     }
   }
@@ -668,13 +675,13 @@ export class IncrementalIndexer extends EventEmitter {
   private async deleteChunksForFile(relativePath: string): Promise<void> {
     // In a real implementation, this would delete from vector database
     // For now, we'll just log the operation
-    this.logger.debug('Deleting chunks for file', { relativePath });
+    this.logger.debug('Deleting chunks for file', { operation: 'delete_chunks', metadata: { relativePath } });
   }
 
   private async updateChunksInDatabase(chunks: CodeChunk[]): Promise<void> {
     // In a real implementation, this would update the vector database
     // For now, we'll just log the operation
-    this.logger.debug('Updating chunks in database', { count: chunks.length });
+    this.logger.debug('Updating chunks in database', { operation: 'update_chunks', metadata: { count: chunks.length } });
   }
 
   private isNewChunk(chunk: CodeChunk): boolean {
@@ -693,7 +700,7 @@ export class IncrementalIndexingManager {
   private logger: StructuredLogger;
 
   constructor() {
-    this.logger = logger.child({ component: 'IncrementalIndexingManager' });
+    this.logger = logger.child({ metadata: { component: 'IncrementalIndexingManager' } });
   }
 
   async createIndexer(
@@ -715,7 +722,7 @@ export class IncrementalIndexingManager {
 
     this.indexers.set(projectId, indexer);
     
-    this.logger.info('Created incremental indexer', { projectId, projectPath });
+    this.logger.info('Created incremental indexer', { operation: 'create_indexer', metadata: { projectId, projectPath } });
     return indexer;
   }
 

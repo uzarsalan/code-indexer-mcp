@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+import { config } from 'dotenv';
+config();
+
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -9,11 +12,11 @@ import {
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
 
-import { CodeIndexer } from './indexer';
-import { EmbeddingService } from './embeddings';
-import { VectorStore } from './vector-store';
-import { SearchService } from './search-service';
-import { defaultIndexingOptions } from './config';
+import { CodeIndexer } from './indexer.js';
+import { EmbeddingService } from './embeddings.js';
+import { VectorStore } from './vector-store.js';
+import { SearchService } from './search-service.js';
+import { defaultIndexingOptions } from './config.js';
 
 class CodeIndexerMCPServer {
   private server: Server;

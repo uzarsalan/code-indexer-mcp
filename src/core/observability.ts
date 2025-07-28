@@ -6,9 +6,9 @@
 import winston from 'winston';
 import { EventEmitter } from 'events';
 import { performance } from 'perf_hooks';
-import { StructuredError, ErrorCode } from './error-handling';
-import { MemoryStats } from './memory-management';
-import { sanitizeForLogging } from './validation-security';
+import { StructuredError, ErrorCode } from './error-handling.js';
+import { MemoryStats } from './memory-management.js';
+import { sanitizeForLogging } from './validation-security.js';
 
 // =============================================================================
 // STRUCTURED LOGGING
@@ -351,7 +351,7 @@ export class MetricsCollector extends EventEmitter {
       // Prevent unbounded metrics growth
       if (this.metrics.size >= this.maxMetrics) {
         // Remove oldest metrics (simple LRU-like)
-        const oldestMetricName = this.metrics.keys().next().value;
+        const oldestMetricName = this.metrics.keys().next().value as string;
         this.metrics.delete(oldestMetricName);
       }
       
@@ -460,35 +460,35 @@ export class ApplicationMetrics {
 
   private initializeMetrics(): void {
     // HTTP request metrics
-    this.metrics.getOrCreateMetric('http_requests_total', 'counter', 'Total HTTP requests');
-    this.metrics.getOrCreateMetric('http_request_duration_seconds', 'histogram', 'HTTP request duration');
+    this.metrics['getOrCreateMetric']('http_requests_total', 'counter', 'Total HTTP requests');
+    this.metrics['getOrCreateMetric']('http_request_duration_seconds', 'histogram', 'HTTP request duration');
     
-    // MCP operation metrics
-    this.metrics.getOrCreateMetric('mcp_operations_total', 'counter', 'Total MCP operations');
-    this.metrics.getOrCreateMetric('mcp_operation_duration_seconds', 'histogram', 'MCP operation duration');
-    this.metrics.getOrCreateMetric('mcp_operation_errors_total', 'counter', 'Total MCP operation errors');
+    // MCP operation metrics  
+    this.metrics['getOrCreateMetric']('mcp_operations_total', 'counter', 'Total MCP operations');
+    this.metrics['getOrCreateMetric']('mcp_operation_duration_seconds', 'histogram', 'MCP operation duration');
+    this.metrics['getOrCreateMetric']('mcp_operation_errors_total', 'counter', 'Total MCP operation errors');
     
     // Indexing metrics
-    this.metrics.getOrCreateMetric('indexing_operations_total', 'counter', 'Total indexing operations');
-    this.metrics.getOrCreateMetric('indexing_chunks_processed', 'counter', 'Total chunks processed');
-    this.metrics.getOrCreateMetric('indexing_duration_seconds', 'histogram', 'Indexing operation duration');
+    this.metrics['getOrCreateMetric']('indexing_operations_total', 'counter', 'Total indexing operations');
+    this.metrics['getOrCreateMetric']('indexing_chunks_processed', 'counter', 'Total chunks processed');
+    this.metrics['getOrCreateMetric']('indexing_duration_seconds', 'histogram', 'Indexing operation duration');
     
     // Search metrics
-    this.metrics.getOrCreateMetric('search_operations_total', 'counter', 'Total search operations');
-    this.metrics.getOrCreateMetric('search_results_returned', 'histogram', 'Number of search results');
-    this.metrics.getOrCreateMetric('search_duration_seconds', 'histogram', 'Search operation duration');
+    this.metrics['getOrCreateMetric']('search_operations_total', 'counter', 'Total search operations');
+    this.metrics['getOrCreateMetric']('search_results_returned', 'histogram', 'Number of search results');
+    this.metrics['getOrCreateMetric']('search_duration_seconds', 'histogram', 'Search operation duration');
     
     // External service metrics
-    this.metrics.getOrCreateMetric('openai_api_calls_total', 'counter', 'Total OpenAI API calls');
-    this.metrics.getOrCreateMetric('openai_api_duration_seconds', 'histogram', 'OpenAI API call duration');
-    this.metrics.getOrCreateMetric('openai_api_errors_total', 'counter', 'Total OpenAI API errors');
+    this.metrics['getOrCreateMetric']('openai_api_calls_total', 'counter', 'Total OpenAI API calls');
+    this.metrics['getOrCreateMetric']('openai_api_duration_seconds', 'histogram', 'OpenAI API call duration');
+    this.metrics['getOrCreateMetric']('openai_api_errors_total', 'counter', 'Total OpenAI API errors');
     
-    this.metrics.getOrCreateMetric('supabase_operations_total', 'counter', 'Total Supabase operations');
-    this.metrics.getOrCreateMetric('supabase_operation_duration_seconds', 'histogram', 'Supabase operation duration');
+    this.metrics['getOrCreateMetric']('supabase_operations_total', 'counter', 'Total Supabase operations');
+    this.metrics['getOrCreateMetric']('supabase_operation_duration_seconds', 'histogram', 'Supabase operation duration');
     
     // System metrics
-    this.metrics.getOrCreateMetric('memory_usage_bytes', 'gauge', 'Memory usage in bytes');
-    this.metrics.getOrCreateMetric('active_connections', 'gauge', 'Number of active connections');
+    this.metrics['getOrCreateMetric']('memory_usage_bytes', 'gauge', 'Memory usage in bytes');
+    this.metrics['getOrCreateMetric']('active_connections', 'gauge', 'Number of active connections');
   }
 
   // Track MCP operations
@@ -506,7 +506,7 @@ export class ApplicationMetrics {
         return result;
       } catch (error) {
         this.metrics.increment('mcp_operations_total', { operation, status: 'error' });
-        this.metrics.increment('mcp_operation_errors_total', { operation, error: error.constructor.name });
+        this.metrics.increment('mcp_operation_errors_total', { operation, error: (error as Error).constructor.name });
         throw error;
       } finally {
         timer();
@@ -551,7 +551,7 @@ export class ApplicationMetrics {
         return result;
       } catch (error) {
         this.metrics.increment(`${service}_api_calls_total`, { operation, status: 'error' });
-        this.metrics.increment(`${service}_api_errors_total`, { operation, error: error.constructor.name });
+        this.metrics.increment(`${service}_api_errors_total`, { operation, error: (error as Error).constructor.name });
         throw error;
       } finally {
         timer();
@@ -655,8 +655,7 @@ export class HealthChecker {
     this.logger.info('Health check completed', {
       operation: 'health_check',
       duration: totalDuration,
-      status: overallStatus,
-      checks: results.length
+      metadata: { status: overallStatus, checks: results.length }
     });
 
     return health;

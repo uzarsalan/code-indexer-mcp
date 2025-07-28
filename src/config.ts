@@ -1,4 +1,7 @@
-import { OpenAIConfig, SupabaseConfig, IndexingOptions } from './types';
+import { config } from 'dotenv';
+config();
+
+import { OpenAIConfig, SupabaseConfig, IndexingOptions } from './types.js';
 
 export const openaiConfig: OpenAIConfig = {
   apiKey: process.env.OPENAI_API_KEY || '',
@@ -7,7 +10,7 @@ export const openaiConfig: OpenAIConfig = {
 
 export const supabaseConfig: SupabaseConfig = {
   url: process.env.SUPABASE_URL || '',
-  anonKey: process.env.SUPABASE_ANON_KEY || ''
+  anonKey: process.env.SUPABASE_SERVICE_KEY || ''
 };
 
 export const defaultIndexingOptions: IndexingOptions = {
