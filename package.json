@@ -1,0 +1,38 @@
+{
+  "name": "code-indexer-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for code indexing using RAG, Supabase, and OpenAI",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "inspect": "node --inspect dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.0",
+    "@supabase/supabase-js": "^2.39.7",
+    "openai": "^4.28.4",
+    "langchain": "^0.1.25",
+    "@langchain/openai": "^0.0.14",
+    "walk": "^2.3.15",
+    "ignore": "^5.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.17",
+    "@types/walk": "^2.3.2",
+    "tsx": "^4.7.1",
+    "typescript": "^5.3.3"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "rag",
+    "code-indexing",
+    "openai",
+    "supabase"
+  ],
+  "author": "",
+  "license": "MIT"
+}
