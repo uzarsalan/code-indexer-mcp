@@ -8,10 +8,10 @@ import { join, relative } from 'path';
 import crypto from 'crypto';
 import { watch, FSWatcher } from 'chokidar';
 import { EventEmitter } from 'events';
-import { CodeChunk, Project } from '../types.js';
-import { StructuredLogger, logger } from './observability.js';
-import { StructuredError, ErrorCode, wrapAsyncOperation } from './error-handling.js';
-import { memoryMonitor, StreamingFileProcessor } from './memory-management.js';
+import { CodeChunk, Project } from '../types';
+import { StructuredLogger, logger } from './observability';
+import { StructuredError, ErrorCode, wrapAsyncOperation } from './error-handling';
+import { memoryMonitor, StreamingFileProcessor } from './memory-management';
 
 // =============================================================================
 // FILE CHANGE TRACKING
@@ -273,6 +273,8 @@ export class IncrementalIndexer extends EventEmitter {
   private projectPath: string;
   private isIndexing: boolean = false;
   private currentSession?: IndexingSession;
+  private changeTimer?: NodeJS.Timeout;
+  private cleanupHandlers: Array<() => void> = [];
 
   constructor(
     projectId: string,
@@ -473,76 +475,163 @@ export class IncrementalIndexer extends EventEmitter {
       await this.stopWatching();
     }
 
-    this.watcher = watch(this.projectPath, {
-      ignored: this.options.excludePatterns,
-      persistent: true,
-      ignoreInitial: true,
-      awaitWriteFinish: {
-        stabilityThreshold: this.options.watchDebounceMs,
-        pollInterval: 100
-      }
-    });
-
-    let changeTimer: NodeJS.Timeout | null = null;
-    const pendingChanges = new Set<string>();
-
-    const handleFileChange = (path: string) => {
-      const relativePath = relative(this.projectPath, path);
-      pendingChanges.add(relativePath);
-
-      // Debounce changes
-      if (changeTimer) {
-        clearTimeout(changeTimer);
-      }
-
-      changeTimer = setTimeout(async () => {
-        if (pendingChanges.size > 0 && !this.isIndexing) {
-          this.logger.info(`File changes detected: ${pendingChanges.size} files`);
-          this.emit('changesDetected', { 
-            files: Array.from(pendingChanges),
-            auto: true 
-          });
-
-          // Auto-trigger indexing if enabled
-          if (this.options.autoCommitChanges) {
-            try {
-              await this.performIncrementalIndex();
-            } catch (error) {
-              this.logger.error('Auto-indexing failed', { error });
-            }
-          }
+    try {
+      this.watcher = watch(this.projectPath, {
+        ignored: this.options.excludePatterns,
+        persistent: true,
+        ignoreInitial: true,
+        awaitWriteFinish: {
+          stabilityThreshold: this.options.watchDebounceMs,
+          pollInterval: 100
         }
-        pendingChanges.clear();
-      }, this.options.watchDebounceMs);
-    };
-
-    this.watcher
-      .on('add', handleFileChange)
-      .on('change', handleFileChange)
-      .on('unlink', handleFileChange)
-      .on('error', (error) => {
-        this.logger.error('File watcher error', { error });
-        this.emit('watchError', error);
       });
 
-    this.logger.info('File watching started', {
-      patterns: this.options.includePatterns,
-      ignored: this.options.excludePatterns
-    });
+      const pendingChanges = new Set<string>();
+
+      const handleFileChange = (path: string) => {
+        try {
+          const relativePath = relative(this.projectPath, path);
+          pendingChanges.add(relativePath);
+
+          // Debounce changes
+          if (this.changeTimer) {
+            clearTimeout(this.changeTimer);
+          }
+
+          this.changeTimer = setTimeout(async () => {
+            if (pendingChanges.size > 0 && !this.isIndexing) {
+              this.logger.info(`File changes detected: ${pendingChanges.size} files`);
+              this.emit('changesDetected', { 
+                files: Array.from(pendingChanges),
+                auto: true 
+              });
+
+              // Auto-trigger indexing if enabled
+              if (this.options.autoCommitChanges) {
+                try {
+                  await this.performIncrementalIndex();
+                } catch (error) {
+                  this.logger.error('Auto-indexing failed', { error });
+                }
+              }
+            }
+            pendingChanges.clear();
+            this.changeTimer = undefined;
+          }, this.options.watchDebounceMs);
+        } catch (error) {
+          this.logger.error('Error handling file change', { path, error });
+        }
+      };
+
+      const errorHandler = (error: Error) => {
+        this.logger.error('File watcher error', { error: error.message }, error);
+        this.emit('watchError', error);
+        
+        // Attempt to restart watcher after a delay
+        setTimeout(() => {
+          if (!this.watcher || this.watcher.closed) {
+            this.logger.info('Attempting to restart file watcher');
+            this.startWatching().catch(restartError => {
+              this.logger.error('Failed to restart file watcher', { error: restartError });
+            });
+          }
+        }, 5000);
+      };
+
+      // Set up event handlers with proper cleanup tracking
+      this.watcher
+        .on('add', handleFileChange)
+        .on('change', handleFileChange)
+        .on('unlink', handleFileChange)
+        .on('error', errorHandler);
+
+      // Track cleanup handlers
+      this.cleanupHandlers.push(() => {
+        if (this.changeTimer) {
+          clearTimeout(this.changeTimer);
+          this.changeTimer = undefined;
+        }
+        pendingChanges.clear();
+      });
+
+      this.logger.info('File watching started', {
+        patterns: this.options.includePatterns,
+        ignored: this.options.excludePatterns
+      });
+    } catch (error) {
+      this.logger.error('Failed to start file watching', { error });
+      throw error;
+    }
   }
 
   async stopWatching(): Promise<void> {
     if (this.watcher) {
-      await this.watcher.close();
-      this.watcher = undefined;
-      this.logger.info('File watching stopped');
+      try {
+        // Clean up timers first
+        if (this.changeTimer) {
+          clearTimeout(this.changeTimer);
+          this.changeTimer = undefined;
+        }
+
+        // Run all cleanup handlers
+        for (const cleanup of this.cleanupHandlers) {
+          try {
+            cleanup();
+          } catch (error) {
+            this.logger.warn('Error during cleanup', { error });
+          }
+        }
+        this.cleanupHandlers = [];
+
+        // Remove all listeners before closing
+        this.watcher.removeAllListeners();
+        
+        // Close the watcher with timeout
+        const closePromise = this.watcher.close();
+        const timeoutPromise = new Promise<void>((_, reject) => {
+          setTimeout(() => reject(new Error('Watcher close timeout')), 5000);
+        });
+
+        await Promise.race([closePromise, timeoutPromise]);
+        this.watcher = undefined;
+        
+        this.logger.info('File watching stopped');
+      } catch (error) {
+        this.logger.error('Error stopping file watcher', { error });
+        this.watcher = undefined; // Force cleanup even on error
+      }
     }
   }
 
   async shutdown(): Promise<void> {
-    await this.stopWatching();
-    this.removeAllListeners();
-    this.logger.info('Incremental indexer shutdown');
+    try {
+      // Stop watching first
+      await this.stopWatching();
+      
+      // Clean up any remaining timers
+      if (this.changeTimer) {
+        clearTimeout(this.changeTimer);
+        this.changeTimer = undefined;
+      }
+      
+      // Run any remaining cleanup handlers
+      for (const cleanup of this.cleanupHandlers) {
+        try {
+          cleanup();
+        } catch (error) {
+          this.logger.warn('Error during shutdown cleanup', { error });
+        }
+      }
+      this.cleanupHandlers = [];
+      
+      // Remove all event listeners
+      this.removeAllListeners();
+      
+      this.logger.info('Incremental indexer shutdown');
+    } catch (error) {
+      this.logger.error('Error during shutdown', { error });
+      throw error;
+    }
   }
 
   getCurrentSession(): IndexingSession | undefined {

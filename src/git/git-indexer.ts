@@ -7,8 +7,8 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 import { spawn } from 'child_process';
 import { promisify } from 'util';
-import { BranchConfigManager, BranchIndexingPolicy } from './branch-config.js';
-import { CodeChunk, Project } from '../types.js';
+import { BranchConfigManager, BranchIndexingPolicy } from './branch-config';
+import { CodeChunk, Project } from '../types';
 
 // Git-specific types
 export interface GitCommit {

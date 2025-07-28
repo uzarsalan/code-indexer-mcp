@@ -1,6 +1,6 @@
-import { EmbeddingService } from './embeddings.js';
-import { VectorStore } from './vector-store.js';
-import { SearchResult } from './types.js';
+import { EmbeddingService } from './embeddings';
+import { VectorStore } from './vector-store';
+import { SearchResult } from './types';
 
 export class SearchService {
   private embeddingService: EmbeddingService;

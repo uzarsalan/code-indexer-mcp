@@ -5,9 +5,9 @@
 
 import Redis from 'ioredis';
 import { EventEmitter } from 'events';
-import { StructuredLogger, logger } from './observability.js';
-import { StructuredError, ErrorCode, wrapAsyncOperation } from './error-handling.js';
-import { CodeChunk, SearchResult } from '../types.js';
+import { StructuredLogger, logger } from './observability';
+import { StructuredError, ErrorCode, wrapAsyncOperation } from './error-handling';
+import { CodeChunk, SearchResult } from '../types';
 
 // =============================================================================
 // CACHE CONFIGURATION
@@ -220,7 +220,7 @@ export class CacheManager extends EventEmitter {
         }
 
         this.stats.hits++;
-        return this.deserializeValue<T>(value, type);
+        return await this.deserializeValue<T>(value, type);
       },
       { operation: 'cache_get', resource: key }
     );
@@ -394,14 +394,17 @@ export class CacheManager extends EventEmitter {
         this.stats.operations.get += keys.length;
         const values = await this.redis.mget(...keys);
         
-        return values.map(value => {
+        const results: (T | null)[] = [];
+        for (const value of values) {
           if (value === null) {
             this.stats.misses++;
-            return null;
+            results.push(null);
+          } else {
+            this.stats.hits++;
+            results.push(await this.deserializeValue<T>(value, 'json'));
           }
-          this.stats.hits++;
-          return this.deserializeValue<T>(value, 'json');
-        });
+        }
+        return results;
       },
       { operation: 'cache_mget', metadata: { keyCount: keys.length } }
     );
@@ -535,7 +538,10 @@ export class CacheManager extends EventEmitter {
       
       if (this.compressionEnabled && jsonString.length > this.config.compression.threshold) {
         const zlib = await import('zlib');
-        const compressed = zlib.gzipSync(Buffer.from(jsonString));
+        const { promisify } = await import('util');
+        const gzipAsync = promisify(zlib.gzip);
+        
+        const compressed = await gzipAsync(Buffer.from(jsonString));
         return `gzip:${compressed.toString('base64')}`;
       }
       
@@ -550,12 +556,15 @@ export class CacheManager extends EventEmitter {
     }
   }
 
-  private deserializeValue<T>(value: string, type?: 'json' | 'string' | 'buffer'): T {
+  private async deserializeValue<T>(value: string, type?: 'json' | 'string' | 'buffer'): Promise<T> {
     try {
       if (value.startsWith('gzip:')) {
-        const zlib = require('zlib');
+        const zlib = await import('zlib');
+        const { promisify } = await import('util');
+        const gunzipAsync = promisify(zlib.gunzip);
+        
         const compressed = Buffer.from(value.slice(5), 'base64');
-        const decompressed = zlib.gunzipSync(compressed);
+        const decompressed = await gunzipAsync(compressed);
         return JSON.parse(decompressed.toString());
       }
       

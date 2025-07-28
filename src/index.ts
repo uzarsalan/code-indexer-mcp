@@ -9,11 +9,11 @@ import {
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
 
-import { CodeIndexer } from './indexer.js';
-import { EmbeddingService } from './embeddings.js';
-import { VectorStore } from './vector-store.js';
-import { SearchService } from './search-service.js';
-import { defaultIndexingOptions } from './config.js';
+import { CodeIndexer } from './indexer';
+import { EmbeddingService } from './embeddings';
+import { VectorStore } from './vector-store';
+import { SearchService } from './search-service';
+import { defaultIndexingOptions } from './config';
 
 class CodeIndexerMCPServer {
   private server: Server;

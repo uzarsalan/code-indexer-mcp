@@ -319,6 +319,9 @@ export class CircuitBreaker extends EventEmitter {
   private failures: number[] = [];
   private nextAttempt: number = 0;
   private readonly config: CircuitBreakerConfig;
+  private readonly maxFailuresHistory: number = 1000;
+  private isExecuting: boolean = false;
+  private executionLock: Promise<void> = Promise.resolve();
 
   constructor(config: Partial<CircuitBreakerConfig> = {}) {
     super();
@@ -335,30 +338,63 @@ export class CircuitBreaker extends EventEmitter {
     operation: () => Promise<T>,
     fallback?: () => Promise<T>
   ): Promise<T> {
-    if (this.state === CircuitState.OPEN) {
-      if (Date.now() < this.nextAttempt) {
+    // Wait for any ongoing state changes to complete
+    await this.executionLock;
+    
+    // Create a new lock for this execution
+    let resolveLock: () => void;
+    this.executionLock = new Promise(resolve => {
+      resolveLock = resolve;
+    });
+
+    try {
+      // Check circuit state atomically
+      if (this.state === CircuitState.OPEN) {
+        if (Date.now() < this.nextAttempt) {
+          if (fallback) {
+            return await fallback();
+          }
+          throw new StructuredError(
+            ErrorCode.SERVICE_UNAVAILABLE,
+            'Circuit breaker is OPEN',
+            { operation: 'circuit_breaker' },
+            { retryable: false }
+          );
+        } else {
+          // Atomic state transition
+          this.state = CircuitState.HALF_OPEN;
+          this.emit('stateChange', CircuitState.HALF_OPEN);
+        }
+      }
+
+      // Only allow one operation in HALF_OPEN state
+      if (this.state === CircuitState.HALF_OPEN && this.isExecuting) {
         if (fallback) {
-          return fallback();
+          return await fallback();
         }
         throw new StructuredError(
           ErrorCode.SERVICE_UNAVAILABLE,
-          'Circuit breaker is OPEN',
+          'Circuit breaker is testing (HALF_OPEN)',
           { operation: 'circuit_breaker' },
-          { retryable: false }
+          { retryable: true }
         );
-      } else {
-        this.state = CircuitState.HALF_OPEN;
-        this.emit('stateChange', CircuitState.HALF_OPEN);
       }
-    }
 
-    try {
-      const result = await operation();
-      this.onSuccess();
-      return result;
-    } catch (error) {
-      this.onFailure();
-      throw error;
+      this.isExecuting = true;
+      
+      try {
+        const result = await operation();
+        this.onSuccess();
+        return result;
+      } catch (error) {
+        this.onFailure();
+        throw error;
+      } finally {
+        this.isExecuting = false;
+      }
+    } finally {
+      // Release the lock
+      resolveLock!();
     }
   }
 
@@ -372,6 +408,12 @@ export class CircuitBreaker extends EventEmitter {
 
   private onFailure(): void {
     const now = Date.now();
+    
+    // Prevent unbounded array growth
+    if (this.failures.length >= this.maxFailuresHistory) {
+      this.failures = this.failures.slice(-this.maxFailuresHistory / 2);
+    }
+    
     this.failures.push(now);
     
     // Remove old failures outside monitoring window

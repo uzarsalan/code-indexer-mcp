@@ -1,4 +1,4 @@
-import { OpenAIConfig, SupabaseConfig, IndexingOptions } from './types.js';
+import { OpenAIConfig, SupabaseConfig, IndexingOptions } from './types';
 
 export const openaiConfig: OpenAIConfig = {
   apiKey: process.env.OPENAI_API_KEY || '',

@@ -6,9 +6,9 @@
 import winston from 'winston';
 import { EventEmitter } from 'events';
 import { performance } from 'perf_hooks';
-import { StructuredError, ErrorCode } from './error-handling.js';
-import { MemoryStats } from './memory-management.js';
-import { sanitizeForLogging } from './validation-security.js';
+import { StructuredError, ErrorCode } from './error-handling';
+import { MemoryStats } from './memory-management';
+import { sanitizeForLogging } from './validation-security';
 
 // =============================================================================
 // STRUCTURED LOGGING
@@ -250,10 +250,19 @@ export interface MetricData {
 export class MetricsCollector extends EventEmitter {
   private metrics: Map<string, MetricData> = new Map();
   private readonly histogramBuckets = [0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300]; // seconds
+  private readonly maxValuesPerMetric: number = 10000;
+  private readonly maxMetrics: number = 1000;
 
   // Counter metrics
   increment(name: string, labels?: Record<string, string>, value: number = 1): void {
     const metric = this.getOrCreateMetric(name, 'counter', `${name} counter`);
+    
+    // Prevent unbounded metric value growth
+    if (metric.values.length >= this.maxValuesPerMetric) {
+      const keepCount = Math.floor(this.maxValuesPerMetric / 2);
+      metric.values = metric.values.slice(-keepCount);
+    }
+    
     metric.values.push({
       value,
       timestamp: new Date(),
@@ -266,6 +275,13 @@ export class MetricsCollector extends EventEmitter {
   // Gauge metrics
   set(name: string, value: number, labels?: Record<string, string>): void {
     const metric = this.getOrCreateMetric(name, 'gauge', `${name} gauge`);
+    
+    // Prevent unbounded metric value growth
+    if (metric.values.length >= this.maxValuesPerMetric) {
+      const keepCount = Math.floor(this.maxValuesPerMetric / 2);
+      metric.values = metric.values.slice(-keepCount);
+    }
+    
     metric.values.push({
       value,
       timestamp: new Date(),
@@ -285,6 +301,21 @@ export class MetricsCollector extends EventEmitter {
         sum: 0,
         count: 0
       };
+    }
+
+    // Prevent unbounded metric value growth
+    if (metric.values.length >= this.maxValuesPerMetric) {
+      const keepCount = Math.floor(this.maxValuesPerMetric / 2);
+      metric.values = metric.values.slice(-keepCount);
+      
+      // Reset histogram buckets to prevent unbounded growth
+      if (metric.histogram.count > this.maxValuesPerMetric * 2) {
+        metric.histogram = {
+          buckets: this.histogramBuckets.map(le => ({ le, count: 0 })),
+          sum: 0,
+          count: 0
+        };
+      }
     }
 
     // Update buckets
@@ -317,6 +348,13 @@ export class MetricsCollector extends EventEmitter {
 
   private getOrCreateMetric(name: string, type: MetricData['type'], help: string): MetricData {
     if (!this.metrics.has(name)) {
+      // Prevent unbounded metrics growth
+      if (this.metrics.size >= this.maxMetrics) {
+        // Remove oldest metrics (simple LRU-like)
+        const oldestMetricName = this.metrics.keys().next().value;
+        this.metrics.delete(oldestMetricName);
+      }
+      
       this.metrics.set(name, {
         name,
         type,
@@ -705,10 +743,29 @@ export const metrics = new MetricsCollector();
 export const appMetrics = new ApplicationMetrics(metrics, logger);
 export const healthChecker = new HealthChecker(logger);
 
-// Set up metrics collection interval
-setInterval(() => {
-  const memUsage = process.memoryUsage();
-  metrics.set('memory_usage_bytes', memUsage.heapUsed, { type: 'heap_used' });
-  metrics.set('memory_usage_bytes', memUsage.heapTotal, { type: 'heap_total' });
-  metrics.set('memory_usage_bytes', memUsage.rss, { type: 'rss' });
-}, 15000); // Every 15 seconds
+// Set up metrics collection interval with cleanup
+let metricsInterval: NodeJS.Timeout | null = null;
+
+if (process.env.NODE_ENV === 'production' || process.env.ENABLE_METRICS === 'true') {
+  metricsInterval = setInterval(() => {
+    const memUsage = process.memoryUsage();
+    metrics.set('memory_usage_bytes', memUsage.heapUsed, { type: 'heap_used' });
+    metrics.set('memory_usage_bytes', memUsage.heapTotal, { type: 'heap_total' });
+    metrics.set('memory_usage_bytes', memUsage.rss, { type: 'rss' });
+  }, 15000); // Every 15 seconds
+}
+
+// Cleanup on shutdown
+process.on('SIGTERM', () => {
+  if (metricsInterval) {
+    clearInterval(metricsInterval);
+    metricsInterval = null;
+  }
+});
+
+process.on('SIGINT', () => {
+  if (metricsInterval) {
+    clearInterval(metricsInterval);
+    metricsInterval = null;
+  }
+});

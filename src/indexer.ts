@@ -2,7 +2,7 @@ import { promises as fs } from 'fs';
 import { join, extname, relative } from 'path';
 import walk from 'walk';
 import ignore from 'ignore';
-import { CodeChunk, IndexingOptions } from './types.js';
+import { CodeChunk, IndexingOptions } from './types';
 
 export class CodeIndexer {
   private options: IndexingOptions;

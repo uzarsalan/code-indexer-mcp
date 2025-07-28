@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
-import { CodeChunk } from './types.js';
-import { openaiConfig } from './config.js';
+import { CodeChunk } from './types';
+import { openaiConfig } from './config';
 
 export class EmbeddingService {
   private openai: OpenAI;

@@ -7,8 +7,8 @@ import { EventEmitter } from 'events';
 import { Readable, Transform, Writable, pipeline } from 'stream';
 import { promisify } from 'util';
 import { promises as fs } from 'fs';
-import { CodeChunk } from '../types.js';
-import { StructuredError, ErrorCode } from './error-handling.js';
+import { CodeChunk } from '../types';
+import { StructuredError, ErrorCode } from './error-handling';
 
 const pipelineAsync = promisify(pipeline);
 
@@ -291,12 +291,27 @@ export class StreamingFileProcessor extends EventEmitter {
     let buffer = '';
     let lineNumber = 1;
     const chunkSize = 1000; // Characters per chunk
+    const maxBufferSize = 50000; // Prevent buffer from growing too large
 
     return new Promise((resolve, reject) => {
-      const readStream = fs.createReadStream(filePath, { encoding: 'utf-8' });
+      const readStream = fs.createReadStream(filePath, { 
+        encoding: 'utf-8',
+        highWaterMark: 16 * 1024 // 16KB chunks to prevent memory spikes
+      });
       
       readStream.on('data', (data: string) => {
         buffer += data;
+        
+        // Prevent buffer from growing too large
+        if (buffer.length > maxBufferSize) {
+          // Force chunk creation to free memory
+          if (buffer.trim()) {
+            const endLine = lineNumber + buffer.split('\n').length - 1;
+            chunks.push(this.createChunk(buffer, filePath, lineNumber, endLine));
+            lineNumber = endLine + 1;
+            buffer = '';
+          }
+        }
         
         // Process complete lines
         const lines = buffer.split('\n');
@@ -324,7 +339,11 @@ export class StreamingFileProcessor extends EventEmitter {
         resolve(chunks);
       });
 
-      readStream.on('error', reject);
+      readStream.on('error', (error) => {
+        // Clean up resources on error
+        readStream.destroy();
+        reject(error);
+      });
     });
   }
 
@@ -399,29 +418,44 @@ export class StreamingFileProcessor extends EventEmitter {
 class Semaphore {
   private permits: number;
   private waiting: Array<() => void> = [];
+  private isAcquiring = false;
 
   constructor(permits: number) {
     this.permits = permits;
   }
 
   async acquire(): Promise<void> {
-    if (this.permits > 0) {
-      this.permits--;
-      return Promise.resolve();
-    }
-
     return new Promise<void>((resolve) => {
-      this.waiting.push(resolve);
+      // Use setImmediate to ensure atomic operation
+      setImmediate(() => {
+        if (this.permits > 0 && !this.isAcquiring) {
+          this.permits--;
+          resolve();
+        } else {
+          this.waiting.push(resolve);
+        }
+      });
     });
   }
 
   release(): void {
-    if (this.waiting.length > 0) {
-      const resolve = this.waiting.shift()!;
-      resolve();
-    } else {
-      this.permits++;
-    }
+    // Use setImmediate to ensure atomic operation
+    setImmediate(() => {
+      if (this.waiting.length > 0) {
+        const resolve = this.waiting.shift()!;
+        resolve();
+      } else {
+        this.permits++;
+      }
+    });
+  }
+
+  // Add method to get current state for debugging
+  getState(): { permits: number; waiting: number } {
+    return {
+      permits: this.permits,
+      waiting: this.waiting.length
+    };
   }
 }
 

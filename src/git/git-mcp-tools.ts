@@ -3,10 +3,10 @@
  * Additional MCP tools for Git-specific code indexing and search
  */
 
-import { GitAwareIndexer } from './git-indexer.js';
-import { BranchConfigManager, BranchConfigBuilder } from './branch-config.js';
-import { VectorStore } from '../vector-store.js';
-import { SearchService } from '../search-service.js';
+import { GitAwareIndexer } from './git-indexer';
+import { BranchConfigManager, BranchConfigBuilder } from './branch-config';
+import { VectorStore } from '../vector-store';
+import { SearchService } from '../search-service';
 
 /**
  * Extended MCP tools for Git functionality

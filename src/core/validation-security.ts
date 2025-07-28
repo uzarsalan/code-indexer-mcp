@@ -7,7 +7,7 @@ import { z } from 'zod';
 import crypto from 'crypto';
 import { rateLimit } from 'express-rate-limit';
 import { Request, Response, NextFunction } from 'express';
-import { StructuredError, ErrorCode, createValidationError } from './error-handling.js';
+import { StructuredError, ErrorCode, createValidationError } from './error-handling';
 
 // =============================================================================
 // INPUT VALIDATION SCHEMAS
@@ -220,6 +220,8 @@ export const DEFAULT_SECURITY_CONFIG: SecurityConfig = {
 export class SecurityManager {
   private config: SecurityConfig;
   private rateLimiter?: any;
+  private rateLimiterStore?: Map<string, any>;
+  private cleanupInterval?: NodeJS.Timeout;
 
   constructor(config: Partial<SecurityConfig> = {}) {
     this.config = { ...DEFAULT_SECURITY_CONFIG, ...config };
@@ -228,6 +230,9 @@ export class SecurityManager {
 
   private initializeRateLimit(): void {
     if (this.config.enableRateLimit) {
+      // Create a memory store with automatic cleanup
+      this.rateLimiterStore = new Map();
+      
       this.rateLimiter = rateLimit({
         windowMs: this.config.rateLimitWindowMs,
         max: this.config.rateLimitMaxRequests,
@@ -238,6 +243,34 @@ export class SecurityManager {
         },
         standardHeaders: true,
         legacyHeaders: false,
+        store: {
+          // Custom store implementation with memory management
+          incr: (key: string, cb: (err?: Error, total?: number) => void) => {
+            const now = Date.now();
+            const entry = this.rateLimiterStore!.get(key) || { count: 0, resetTime: now + this.config.rateLimitWindowMs };
+            
+            // Reset if window has expired
+            if (now >= entry.resetTime) {
+              entry.count = 0;
+              entry.resetTime = now + this.config.rateLimitWindowMs;
+            }
+            
+            entry.count++;
+            this.rateLimiterStore!.set(key, entry);
+            
+            cb(undefined, entry.count);
+          },
+          decrement: (key: string) => {
+            const entry = this.rateLimiterStore!.get(key);
+            if (entry && entry.count > 0) {
+              entry.count--;
+              this.rateLimiterStore!.set(key, entry);
+            }
+          },
+          resetKey: (key: string) => {
+            this.rateLimiterStore!.delete(key);
+          }
+        },
         handler: (req: Request, res: Response) => {
           throw new StructuredError(
             ErrorCode.RATE_LIMITED,
@@ -253,6 +286,11 @@ export class SecurityManager {
           );
         }
       });
+      
+      // Set up periodic cleanup of expired entries
+      this.cleanupInterval = setInterval(() => {
+        this.cleanupExpiredEntries();
+      }, this.config.rateLimitWindowMs); // Cleanup every window period
     }
   }
 
@@ -365,6 +403,50 @@ export class SecurityManager {
   removeApiKey(key: string): void {
     this.config.trustedApiKeys.delete(key);
   }
+  
+  private cleanupExpiredEntries(): void {
+    if (!this.rateLimiterStore) return;
+    
+    const now = Date.now();
+    const keysToDelete: string[] = [];
+    
+    // Find expired entries
+    for (const [key, entry] of this.rateLimiterStore) {
+      if (now >= entry.resetTime) {
+        keysToDelete.push(key);
+      }
+    }
+    
+    // Remove expired entries
+    for (const key of keysToDelete) {
+      this.rateLimiterStore.delete(key);
+    }
+    
+    // Prevent unbounded growth by removing oldest entries if too many
+    const maxEntries = 10000;
+    if (this.rateLimiterStore.size > maxEntries) {
+      const entries = Array.from(this.rateLimiterStore.entries());
+      entries.sort((a, b) => a[1].resetTime - b[1].resetTime);
+      
+      const toDelete = entries.slice(0, entries.length - maxEntries + 1000).map(([key]) => key);
+      for (const key of toDelete) {
+        this.rateLimiterStore.delete(key);
+      }
+    }
+  }
+  
+  // Cleanup method for graceful shutdown
+  cleanup(): void {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = undefined;
+    }
+    
+    if (this.rateLimiterStore) {
+      this.rateLimiterStore.clear();
+      this.rateLimiterStore = undefined;
+    }
+  }
 
   generateApiKey(): string {
     const randomBytes = crypto.randomBytes(32);
@@ -372,7 +454,36 @@ export class SecurityManager {
   }
 
   private isValidApiKey(key: string): boolean {
-    return this.config.trustedApiKeys.has(key);
+    // Use constant-time comparison to prevent timing attacks
+    const storedKeys = Array.from(this.config.trustedApiKeys);
+    
+    // Ensure we always check at least one key to maintain constant time
+    if (storedKeys.length === 0) {
+      // Perform a dummy comparison to prevent timing differences
+      crypto.timingSafeEqual(
+        Buffer.from(key.padEnd(67, '0')), 
+        Buffer.from('mk_'.padEnd(67, '0'))
+      );
+      return false;
+    }
+    
+    let isValid = false;
+    for (const validKey of storedKeys) {
+      if (key.length === validKey.length) {
+        try {
+          const keyBuffer = Buffer.from(key);
+          const validKeyBuffer = Buffer.from(validKey);
+          if (crypto.timingSafeEqual(keyBuffer, validKeyBuffer)) {
+            isValid = true;
+          }
+        } catch (error) {
+          // Continue checking other keys even if one fails
+          continue;
+        }
+      }
+    }
+    
+    return isValid;
   }
 
   private isValidApiKeyFormat(key: string): boolean {
@@ -490,12 +601,14 @@ export class AuditLogger {
       ...event
     };
 
-    this.events.push(auditEvent);
-
-    // Keep only recent events in memory
-    if (this.events.length > this.maxEvents) {
-      this.events = this.events.slice(-this.maxEvents);
+    // Prevent unbounded growth by removing oldest events first
+    if (this.events.length >= this.maxEvents) {
+      // Remove oldest half when we hit the limit
+      const removeCount = Math.floor(this.maxEvents / 2);
+      this.events.splice(0, removeCount);
     }
+
+    this.events.push(auditEvent);
 
     // In production, this would be sent to a logging service
     console.log('AUDIT:', JSON.stringify(auditEvent));
@@ -516,6 +629,15 @@ export class AuditLogger {
 export const securityManager = new SecurityManager();
 export const secretManager = new SecretManager();
 export const auditLogger = new AuditLogger();
+
+// Graceful shutdown cleanup
+process.on('SIGTERM', () => {
+  securityManager.cleanup();
+});
+
+process.on('SIGINT', () => {
+  securityManager.cleanup();
+});
 
 // =============================================================================
 // UTILITY FUNCTIONS

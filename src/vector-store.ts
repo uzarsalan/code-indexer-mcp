@@ -1,6 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { CodeChunk, SearchResult, Project, IndexingOptions } from './types.js';
-import { supabaseConfig } from './config.js';
+import { CodeChunk, SearchResult, Project, IndexingOptions } from './types';
+import { supabaseConfig } from './config';
 
 export class VectorStore {
   private supabase: SupabaseClient;
