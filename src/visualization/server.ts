@@ -108,7 +108,7 @@ export class GraphVisualizationServer {
   private async getProjectGraph(req: express.Request, res: express.Response): Promise<void> {
     try {
       const { projectId } = req.params;
-      const { limit = '100', nodeType, filePath } = req.query;
+      const { limit = '100', nodeType, filePath, cluster = 'true' } = req.query;
 
       // Get nodes
       const nodesResult = await this.storage.queryNodes({
@@ -132,7 +132,7 @@ export class GraphVisualizationServer {
       }
 
       // Format for visualization (Cytoscape.js format)
-      const graphData = {
+      let graphData = {
         nodes: nodesResult.data.map(node => ({
           data: {
             id: node.id,
@@ -161,13 +161,20 @@ export class GraphVisualizationServer {
           }))
       };
 
+      // Apply clustering if requested
+      if (cluster === 'true') {
+        const clusters = this.generateClusters(nodesResult.data, edges);
+        graphData = this.applyClusterVisualization(graphData, clusters);
+      }
+
       res.json({ 
         success: true, 
         data: graphData,
         meta: {
           totalNodes: nodesResult.totalCount,
           visibleNodes: graphData.nodes.length,
-          visibleEdges: graphData.edges.length
+          visibleEdges: graphData.edges.length,
+          clustered: cluster === 'true'
         }
       });
     } catch (error) {
@@ -362,6 +369,123 @@ export class GraphVisualizationServer {
     else if (nodesPerFile > 10) score -= 5;
     
     return Math.max(0, Math.min(100, score));
+  }
+
+  /**
+   * Generate clusters based on file proximity and node relationships
+   */
+  private generateClusters(nodes: any[], edges: any[]): Map<string, string[]> {
+    const clusters = new Map<string, string[]>();
+    const nodeById = new Map(nodes.map(node => [node.id, node]));
+    
+    // Strategy 1: Cluster by file path
+    const fileClusters = new Map<string, string[]>();
+    nodes.forEach(node => {
+      const filePath = node.location.filePath;
+      if (!fileClusters.has(filePath)) {
+        fileClusters.set(filePath, []);
+      }
+      fileClusters.get(filePath)!.push(node.id);
+    });
+
+    // Strategy 2: Cluster by module (directory)
+    const moduleClusters = new Map<string, string[]>();
+    nodes.forEach(node => {
+      const pathParts = node.location.filePath.split('/');
+      const moduleDir = pathParts.slice(0, -1).join('/') || 'root';
+      if (!moduleClusters.has(moduleDir)) {
+        moduleClusters.set(moduleDir, []);
+      }
+      moduleClusters.get(moduleDir)!.push(node.id);
+    });
+
+    // Strategy 3: Cluster by node type
+    const typeClusters = new Map<string, string[]>();
+    nodes.forEach(node => {
+      const nodeType = node.nodeType;
+      if (!typeClusters.has(nodeType)) {
+        typeClusters.set(nodeType, []);
+      }
+      typeClusters.get(nodeType)!.push(node.id);
+    });
+
+    // Merge strategies - prioritize file-based clustering
+    fileClusters.forEach((nodeIds, filePath) => {
+      if (nodeIds.length > 1) { // Only cluster files with multiple nodes
+        const fileName = filePath.split('/').pop() || filePath;
+        clusters.set(`file:${fileName}`, nodeIds);
+      }
+    });
+
+    // Add module clusters for large directories
+    moduleClusters.forEach((nodeIds, moduleDir) => {
+      if (nodeIds.length > 5 && !moduleDir.includes('node_modules')) {
+        const moduleName = moduleDir.split('/').pop() || 'root';
+        if (!clusters.has(`file:${moduleName}`)) { // Avoid duplicate with file clusters
+          clusters.set(`module:${moduleName}`, nodeIds);
+        }
+      }
+    });
+
+    return clusters;
+  }
+
+  /**
+   * Apply visual clustering to graph data
+   */
+  private applyClusterVisualization(graphData: any, clusters: Map<string, string[]>): any {
+    const clusterColors = [
+      '#E3F2FD', '#F3E5F5', '#E8F5E8', '#FFF3E0', '#FCE4EC',
+      '#E0F2F1', '#F1F8E9', '#FFF8E1', '#E8EAF6', '#EFEBE9'
+    ];
+    
+    let colorIndex = 0;
+    const nodeClusterMap = new Map<string, { clusterId: string; color: string }>();
+
+    // Assign cluster info to nodes
+    clusters.forEach((nodeIds, clusterId) => {
+      const clusterColor = clusterColors[colorIndex % clusterColors.length];
+      colorIndex++;
+      
+      nodeIds.forEach(nodeId => {
+        nodeClusterMap.set(nodeId, { clusterId, color: clusterColor });
+      });
+    });
+
+    // Apply cluster information to nodes
+    graphData.nodes.forEach((node: any) => {
+      const clusterInfo = nodeClusterMap.get(node.data.id);
+      if (clusterInfo) {
+        node.data.cluster = clusterInfo.clusterId;
+        node.data.clusterColor = clusterInfo.color;
+        // Add visual indicators
+        node.classes = 'clustered';
+      }
+    });
+
+    // Add cluster parent nodes for better visualization
+    const clusterNodes: any[] = [];
+    clusters.forEach((nodeIds, clusterId) => {
+      if (nodeIds.length > 2) { // Only create cluster nodes for groups of 3+
+        const clusterColor = clusterColors[(colorIndex++) % clusterColors.length];
+        clusterNodes.push({
+          data: {
+            id: `cluster-${clusterId}`,
+            label: clusterId.split(':')[1] || clusterId,
+            isCluster: true,
+            size: Math.max(30, nodeIds.length * 5),
+            color: clusterColor,
+            type: 'CLUSTER'
+          },
+          classes: 'cluster-node'
+        });
+      }
+    });
+
+    // Add cluster nodes to graph
+    graphData.nodes.push(...clusterNodes);
+
+    return graphData;
   }
 
   public start(): void {

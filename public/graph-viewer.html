@@ -343,6 +343,12 @@
                 <label>Limit</label>
                 <input type="number" id="limitInput" value="100" min="10" max="1000" step="10">
             </div>
+            <div class="control-group">
+                <label>
+                    <input type="checkbox" id="clusterToggle" checked> 
+                    Enable Clustering
+                </label>
+            </div>
             <button id="refreshBtn">🔄 Refresh</button>
         </div>
     </div>
@@ -405,7 +411,7 @@
             constructor() {
                 this.cy = null;
                 this.currentProject = null;
-                this.currentLayout = 'cose-bilkent';
+                this.currentLayout = 'cose';
                 this.searchTimeout = null;
                 
                 this.init();
@@ -444,8 +450,10 @@
                 });
 
                 if (projects.length > 0) {
-                    select.value = projects[0].id;
-                    this.selectProject(projects[0].id);
+                    // Select first project with graph data, fallback to first project
+                    const projectWithData = projects.find(p => p.stats.totalNodes > 0) || projects[0];
+                    select.value = projectWithData.id;
+                    this.selectProject(projectWithData.id);
                 }
             }
 
@@ -470,20 +478,27 @@
             async loadGraphData() {
                 const nodeType = document.getElementById('nodeTypeFilter').value;
                 const limit = document.getElementById('limitInput').value;
+                const clustering = document.getElementById('clusterToggle').checked;
                 
                 const params = new URLSearchParams({
-                    limit: limit || '100'
+                    limit: limit || '100',
+                    cluster: clustering.toString()
                 });
                 
                 if (nodeType) params.append('nodeType', nodeType);
 
+                console.log('🌐 Fetching graph data from:', `/api/projects/${this.currentProject}/graph?${params}`);
                 const response = await fetch(`/api/projects/${this.currentProject}/graph?${params}`);
                 const result = await response.json();
                 
+                console.log('📥 Graph API response:', result);
+                
                 if (result.success) {
+                    console.log('✅ Graph data received, rendering...');
                     this.renderGraph(result.data);
                     this.updateGraphMeta(result.meta);
                 } else {
+                    console.error('❌ Graph API error:', result.error);
                     throw new Error(result.error);
                 }
             }
@@ -513,8 +528,23 @@
             }
 
             initializeCytoscape() {
+                console.log('🚀 Initializing Cytoscape...');
+                const container = document.getElementById('graph');
+                console.log('📦 Graph container:', container);
+                
+                // Register layout extensions
+                if (window.cytoscapeCoseBilkent) {
+                    cytoscape.use(window.cytoscapeCoseBilkent);
+                    console.log('✅ cose-bilkent extension registered');
+                }
+                
+                if (window.cytoscapeDagre) {
+                    cytoscape.use(window.cytoscapeDagre);
+                    console.log('✅ dagre extension registered');
+                }
+                
                 this.cy = cytoscape({
-                    container: document.getElementById('graph'),
+                    container: container,
                     style: [
                         {
                             selector: 'node',
@@ -541,14 +571,41 @@
                             }
                         },
                         {
+                            selector: 'node.clustered',
+                            style: {
+                                'border-width': 3,
+                                'border-color': 'data(clusterColor)',
+                                'border-style': 'dashed'
+                            }
+                        },
+                        {
+                            selector: 'node.cluster-node',
+                            style: {
+                                'background-color': 'data(color)',
+                                'label': 'data(label)',
+                                'width': 'data(size)',
+                                'height': 'data(size)',
+                                'font-size': '14px',
+                                'font-weight': 'bold',
+                                'text-valign': 'center',
+                                'text-halign': 'center',
+                                'shape': 'roundrectangle',
+                                'opacity': 0.7,
+                                'border-width': 2,
+                                'border-color': '#666',
+                                'border-style': 'solid'
+                            }
+                        },
+                        {
                             selector: 'edge',
                             style: {
-                                'width': 2,
-                                'line-color': 'data(color)',
-                                'target-arrow-color': 'data(color)',
+                                'width': 3,
+                                'line-color': function(ele) { return ele.data('color') || '#666'; },
+                                'target-arrow-color': function(ele) { return ele.data('color') || '#666'; },
                                 'target-arrow-shape': 'triangle',
                                 'curve-style': 'bezier',
-                                'overlay-opacity': 0
+                                'overlay-opacity': 0,
+                                'opacity': 0.8
                             }
                         },
                         {
@@ -562,7 +619,7 @@
                     ],
                     elements: [],
                     layout: {
-                        name: 'cose-bilkent',
+                        name: 'cose', // Fallback to standard layout
                         animate: true,
                         animationDuration: 1000,
                         fit: true,
@@ -570,6 +627,7 @@
                     }
                 });
 
+                console.log('✅ Cytoscape initialized:', this.cy);
                 this.setupCytoscapeEvents();
             }
 
@@ -602,21 +660,48 @@
             }
 
             renderGraph(graphData) {
-                if (!this.cy) return;
+                console.log('🎯 renderGraph called with:', graphData);
+                console.log('🔍 Cytoscape instance:', this.cy);
+                
+                if (!this.cy) {
+                    console.error('❌ Cytoscape not initialized!');
+                    return;
+                }
 
+                console.log('📊 Adding nodes and edges...');
+                console.log('🟢 Nodes count:', graphData.nodes?.length);
+                console.log('🔗 Edges count:', graphData.edges?.length);
+                console.log('🔍 Sample node:', graphData.nodes[0]);
+                console.log('🔍 Sample edge:', graphData.edges[0]);
+                
                 this.cy.elements().remove();
                 this.cy.add(graphData.nodes);
                 this.cy.add(graphData.edges);
                 
+                console.log('📈 Elements in graph:', this.cy.elements().length);
+                console.log('🟢 Nodes in graph:', this.cy.nodes().length);
+                console.log('🔗 Edges in graph:', this.cy.edges().length);
+                
+                console.log('✅ Elements added, applying layout...');
                 this.applyLayout();
             }
 
             applyLayout(layoutName = this.currentLayout) {
                 if (!this.cy) return;
                 
-                this.currentLayout = layoutName;
+                this.currentLayout = layoutName || 'cose';
                 
                 const layoutOptions = {
+                    'cose': {
+                        name: 'cose',
+                        animate: true,
+                        animationDuration: 1000,
+                        fit: true,
+                        padding: 50,
+                        nodeRepulsion: 400000,
+                        idealEdgeLength: 100,
+                        edgeElasticity: 100
+                    },
                     'cose-bilkent': {
                         name: 'cose-bilkent',
                         animate: true,
@@ -654,7 +739,9 @@
                     }
                 };
 
-                const layout = this.cy.layout(layoutOptions[layoutName] || layoutOptions['cose-bilkent']);
+                const selectedLayout = layoutOptions[layoutName] || layoutOptions['cose'];
+                console.log('🎨 Applying layout:', selectedLayout.name);
+                const layout = this.cy.layout(selectedLayout);
                 layout.run();
             }
 
@@ -832,6 +919,11 @@
                 });
 
                 document.getElementById('limitInput').addEventListener('change', () => {
+                    if (this.currentProject) this.loadGraphData();
+                });
+
+                // Clustering toggle
+                document.getElementById('clusterToggle').addEventListener('change', () => {
                     if (this.currentProject) this.loadGraphData();
                 });
 

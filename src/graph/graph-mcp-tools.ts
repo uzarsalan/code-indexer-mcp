@@ -11,6 +11,7 @@ import { IncrementalGraphUpdater } from './incremental-updater.js';
 import { ASTAnalyzer } from '../ast-analyzer.js';
 import { CodePurposeGenerator } from '../code-purpose-generator.js';
 import { FeatureAnalyzer } from '../feature-analyzer.js';
+import { BugHunter } from '../bug-hunter.js';
 import { supabaseConfig } from '../config.js';
 
 /**
@@ -245,6 +246,58 @@ export const GRAPH_MCP_TOOLS = [
       },
       required: ['projectName', 'featureTitle', 'description']
     }
+  },
+  {
+    name: 'hunt_bug',
+    description: 'Analyze bug reports and find potential root causes using code graph analysis',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectName: {
+          type: 'string',
+          description: 'Name of the project'
+        },
+        title: {
+          type: 'string',
+          description: 'Bug title/summary'
+        },
+        description: {
+          type: 'string',
+          description: 'Detailed bug description'
+        },
+        errorMessage: {
+          type: 'string',
+          description: 'Error message if available (optional)'
+        },
+        stackTrace: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Stack trace lines (optional)',
+          default: []
+        },
+        expectedBehavior: {
+          type: 'string',
+          description: 'What should happen (optional)'
+        },
+        actualBehavior: {
+          type: 'string',
+          description: 'What actually happens (optional)'
+        },
+        stepsToReproduce: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Steps to reproduce the bug (optional)',
+          default: []
+        },
+        severity: {
+          type: 'string',
+          enum: ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'],
+          description: 'Bug severity level',
+          default: 'MEDIUM'
+        }
+      },
+      required: ['projectName', 'title', 'description']
+    }
   }
 ];
 
@@ -260,6 +313,7 @@ export class GraphMCPHandler {
   private astAnalyzer: ASTAnalyzer;
   private purposeGenerator: CodePurposeGenerator;
   private featureAnalyzer: FeatureAnalyzer;
+  private bugHunter: BugHunter;
 
   constructor() {
     this.supabase = createClient(supabaseConfig.url, supabaseConfig.anonKey);
@@ -270,6 +324,7 @@ export class GraphMCPHandler {
     this.queryEngine = new GraphQueryEngine(this.storage);
     this.updater = new IncrementalGraphUpdater(this.storage, this.builder, this.astAnalyzer);
     this.featureAnalyzer = new FeatureAnalyzer();
+    this.bugHunter = new BugHunter();
   }
 
   async handleTool(name: string, args: any): Promise<any> {
@@ -292,6 +347,8 @@ export class GraphMCPHandler {
         return await this.handleUpdateGraphIncremental(args);
       case 'analyze_feature_requirements':
         return await this.handleAnalyzeFeatureRequirements(args);
+      case 'hunt_bug':
+        return await this.handleHuntBug(args);
       default:
         throw new Error(`Unknown graph tool: ${name}`);
     }
@@ -842,6 +899,51 @@ export class GraphMCPHandler {
           {
             type: 'text',
             text: `❌ **Error analyzing feature requirements:** ${error instanceof Error ? error.message : 'Unknown error'}`
+          }
+        ]
+      };
+    }
+  }
+
+  private async handleHuntBug(args: {
+    projectName: string;
+    title: string;
+    description: string;
+    errorMessage?: string;
+    stackTrace?: string[];
+    expectedBehavior?: string;
+    actualBehavior?: string;
+    stepsToReproduce?: string[];
+    severity?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  }) {
+    try {
+      const bugReport = {
+        title: args.title,
+        description: args.description,
+        errorMessage: args.errorMessage,
+        stackTrace: args.stackTrace || [],
+        expectedBehavior: args.expectedBehavior,
+        actualBehavior: args.actualBehavior,
+        stepsToReproduce: args.stepsToReproduce || [],
+        severity: args.severity || 'MEDIUM' as const
+      };
+
+      const analysis = await this.bugHunter.huntBug(args.projectName, bugReport);
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: analysis.investigationPrompt
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ **Error hunting bug:** ${error instanceof Error ? error.message : 'Unknown error'}`
           }
         ]
       };

@@ -6,6 +6,7 @@
 import { ASTAnalyzer, ASTNode } from '../ast-analyzer.js';
 import { GraphStorageEngine } from './graph-storage.js';
 import { CodePurposeGenerator } from '../code-purpose-generator.js';
+import { APIConnectionAnalyzer } from '../api-connection-analyzer.js';
 import { 
   GraphNode, GraphEdge, NodeType, EdgeType, 
   ProjectId, VersionId, GraphBuildContext,
@@ -21,6 +22,7 @@ export class GraphBuilder {
   private astAnalyzer: ASTAnalyzer;
   private purposeGenerator: CodePurposeGenerator;
   private storage: GraphStorageEngine;
+  private apiAnalyzer: APIConnectionAnalyzer;
 
   constructor(
     astAnalyzer: ASTAnalyzer,

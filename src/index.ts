@@ -284,6 +284,7 @@ class CodeIndexerMCPServer {
           case 'find_circular_dependencies':
           case 'update_graph_incremental':
           case 'analyze_feature_requirements':
+          case 'hunt_bug':
             return await this.graphHandler.handleTool(name, args);
 
           default:
