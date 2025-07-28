@@ -283,6 +283,7 @@ class CodeIndexerMCPServer {
           case 'find_bottlenecks':
           case 'find_circular_dependencies':
           case 'update_graph_incremental':
+          case 'analyze_feature_requirements':
             return await this.graphHandler.handleTool(name, args);
 
           default:

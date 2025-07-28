@@ -10,6 +10,7 @@ import { GraphQueryEngine } from './graph-query-engine.js';
 import { IncrementalGraphUpdater } from './incremental-updater.js';
 import { ASTAnalyzer } from '../ast-analyzer.js';
 import { CodePurposeGenerator } from '../code-purpose-generator.js';
+import { FeatureAnalyzer } from '../feature-analyzer.js';
 import { supabaseConfig } from '../config.js';
 
 /**
@@ -210,6 +211,40 @@ export const GRAPH_MCP_TOOLS = [
       },
       required: ['projectName', 'changes']
     }
+  },
+  {
+    name: 'analyze_feature_requirements',
+    description: 'Analyze feature requirements and generate implementation plan with code locations',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectName: {
+          type: 'string',
+          description: 'Name of the project'
+        },
+        featureTitle: {
+          type: 'string',
+          description: 'Title of the feature to implement'
+        },
+        description: {
+          type: 'string',
+          description: 'Detailed description of the feature requirements'
+        },
+        components: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'List of components that might be affected',
+          default: []
+        },
+        functionalAreas: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'List of functional areas involved',
+          default: []
+        }
+      },
+      required: ['projectName', 'featureTitle', 'description']
+    }
   }
 ];
 
@@ -224,6 +259,7 @@ export class GraphMCPHandler {
   private updater: IncrementalGraphUpdater;
   private astAnalyzer: ASTAnalyzer;
   private purposeGenerator: CodePurposeGenerator;
+  private featureAnalyzer: FeatureAnalyzer;
 
   constructor() {
     this.supabase = createClient(supabaseConfig.url, supabaseConfig.anonKey);
@@ -233,6 +269,7 @@ export class GraphMCPHandler {
     this.builder = new GraphBuilder(this.astAnalyzer, this.purposeGenerator, this.storage);
     this.queryEngine = new GraphQueryEngine(this.storage);
     this.updater = new IncrementalGraphUpdater(this.storage, this.builder, this.astAnalyzer);
+    this.featureAnalyzer = new FeatureAnalyzer();
   }
 
   async handleTool(name: string, args: any): Promise<any> {
@@ -253,6 +290,8 @@ export class GraphMCPHandler {
         return await this.handleFindCircularDependencies(args);
       case 'update_graph_incremental':
         return await this.handleUpdateGraphIncremental(args);
+      case 'analyze_feature_requirements':
+        return await this.handleAnalyzeFeatureRequirements(args);
       default:
         throw new Error(`Unknown graph tool: ${name}`);
     }
@@ -766,6 +805,43 @@ export class GraphMCPHandler {
           {
             type: 'text',
             text: `❌ **Error updating graph:** ${error instanceof Error ? error.message : 'Unknown error'}`
+          }
+        ]
+      };
+    }
+  }
+
+  private async handleAnalyzeFeatureRequirements(args: {
+    projectName: string;
+    featureTitle: string;
+    description: string;
+    components?: string[];
+    functionalAreas?: string[];
+  }) {
+    try {
+      const requirement = {
+        title: args.featureTitle,
+        description: args.description,
+        components: args.components || [],
+        functionalAreas: args.functionalAreas || []
+      };
+
+      const plan = await this.featureAnalyzer.analyzeFeature(args.projectName, requirement);
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: plan.prompt
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ **Error analyzing feature requirements:** ${error instanceof Error ? error.message : 'Unknown error'}`
           }
         ]
       };
